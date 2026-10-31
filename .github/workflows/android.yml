@@ -38,12 +38,12 @@ jobs:
             gh release download dev-signing-key --pattern liveperformer-dev.keystore --dir .
             mv liveperformer-dev.keystore "$KEY"
           else
-            keytool -genkeypair -noprompt -keystore "$KEY" -storepass android -keypass android \\
-              -alias liveperformer-dev -keyalg RSA -keysize 3072 -validity 10000 \\
+            keytool -genkeypair -noprompt -keystore "$KEY" -storepass android -keypass android \
+              -alias liveperformer-dev -keyalg RSA -keysize 3072 -validity 10000 \
               -dname 'CN=LivePerformer DEV ONLY, OU=Public Test Signing, O=LivePerformer, C=TW'
             cp "$KEY" liveperformer-dev.keystore
-            gh release create dev-signing-key liveperformer-dev.keystore --target "$GITHUB_SHA" \\
-              --title 'Public test-only signing key (never use for production)' --prerelease \\
+            gh release create dev-signing-key liveperformer-dev.keystore --target "$GITHUB_SHA" \
+              --title 'Public test-only signing key (never use for production)' --prerelease \
               --notes 'PUBLIC development key. Anyone can sign APKs with this key. Do not use for production releases. The previous ephemeral debug certificate cannot be reused. One-time uninstall may be required.'
           fi
           keytool -list -v -keystore "$KEY" -storepass android | grep 'SHA256:'
