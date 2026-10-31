@@ -35,9 +35,11 @@ jobs:
           APK=app/build/outputs/apk/debug/app-debug.apk
           test -s "$APK"
           unzip -Z1 "$APK" > apk-entries.txt
-          grep -Fxq 'lib/arm64-v8a/libliveperformer.so' apk-entries.txt
-          grep -Fxq 'lib/arm64-v8a/libfluidsynth.so' apk-entries.txt
-          grep -Fxq 'assets/GeneralUser-GS.sf2' apk-entries.txt
+          echo "APK native libraries and assets:"
+          grep -E '^(lib/arm64-v8a/|assets/)' apk-entries.txt | head -70 || true
+          grep -Fxq 'lib/arm64-v8a/libliveperformer.so' apk-entries.txt || { echo "::error::Missing lib/arm64-v8a/libliveperformer.so"; exit 1; }
+          grep -Fxq 'lib/arm64-v8a/libfluidsynth.so' apk-entries.txt || { echo "::error::Missing lib/arm64-v8a/libfluidsynth.so"; exit 1; }
+          grep -Fxq 'assets/GeneralUser-GS.sf2' apk-entries.txt || { echo "::error::Missing assets/GeneralUser-GS.sf2"; exit 1; }
       - name: Publish installable debug APK
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -54,7 +56,7 @@ jobs:
               --notes "Experimental Android debug build. Hardware audio latency and USB MIDI not yet verified."
           fi
       - name: Upload debug APK
-        if: success()
+        if: always() && hashFiles('app/build/outputs/apk/debug/*.apk') != ''
         uses: actions/upload-artifact@v4
         with:
           name: LivePerformer-debug-apk
