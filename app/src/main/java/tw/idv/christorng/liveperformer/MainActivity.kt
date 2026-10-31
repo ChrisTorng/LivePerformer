@@ -1,6 +1,10 @@
 package tw.idv.christorng.liveperformer
 
 import android.os.Bundle
+import android.os.Build
+import androidx.core.view.WindowCompat
+import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -25,7 +29,28 @@ import java.io.File
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { PerformerScreen() } }
+        // Android 15 enforces edge-to-edge; Compose applies the safe insets explicitly.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) window.isNavigationBarContrastEnforced = false
+        setContent {
+            val context = LocalContext.current
+            val darkMode = isSystemInDarkTheme()
+            val colors = remember(darkMode) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (darkMode) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+                } else {
+                    if (darkMode) darkColorScheme() else lightColorScheme()
+                }
+            }
+            SideEffect {
+                val bars = WindowCompat.getInsetsController(window, window.decorView)
+                bars.isAppearanceLightStatusBars = !darkMode
+                bars.isAppearanceLightNavigationBars = !darkMode
+            }
+            MaterialTheme(colorScheme = colors) { PerformerScreen() }
+        }
     }
 }
 
@@ -107,7 +132,11 @@ private fun PerformerScreen() {
         }
     }
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+        modifier = Modifier.fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .verticalScroll(rememberScrollState())
+            .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text("LivePerformer", style = MaterialTheme.typography.headlineMedium)
@@ -159,8 +188,9 @@ private fun PerformerScreen() {
         Text("音訊診斷", style = MaterialTheme.typography.titleMedium)
         Text(audioStatus, style = MaterialTheme.typography.bodySmall)
         Text("MIDI→callback 是軟體內部排程時間，不等於耳機實際發聲延遲。", style = MaterialTheme.typography.bodySmall)
+        Text("播放測試音只會發出短聲，不會進行麥克風回錄或量測實際延遲。", style = MaterialTheme.typography.bodySmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { NativeEngine.midi(NativeEngine.TEST_PULSE, 0, 0, 0) }) { Text("測試短脈衝") }
+            Button(onClick = { NativeEngine.midi(NativeEngine.TEST_PULSE, 0, 0, 0) }) { Text("播放測試音") }
             OutlinedButton(onClick = { NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0) }) { Text("全部停止") }
         }
         Text("可匯入 Salamander Grand Piano SF2，比較 GM 與高品質鋼琴。錄製與 Loop 暫不提供。", style = MaterialTheme.typography.bodySmall)
