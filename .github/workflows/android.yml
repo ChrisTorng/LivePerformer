@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   android:
@@ -30,6 +30,28 @@ jobs:
           gradle-version: '9.6.0'
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace --no-daemon
+      - name: Verify APK packaging
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          unzip -Z1 "$APK" | grep -Fq 'lib/arm64-v8a/libliveperformer.so'
+          unzip -Z1 "$APK" | grep -Fq 'lib/arm64-v8a/libfluidsynth.so'
+          unzip -Z1 "$APK" | grep -Fq 'assets/GeneralUser-GS.sf2'
+      - name: Publish installable debug APK
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk LivePerformer-v0.1.0-debug.apk
+          TAG=v0.1.0-dev
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" LivePerformer-v0.1.0-debug.apk --clobber
+          else
+            gh release create "$TAG" LivePerformer-v0.1.0-debug.apk \
+              --target "$GITHUB_SHA" --prerelease \
+              --title "LivePerformer v0.1.0 Android debug" \
+              --notes "Experimental Android debug build. Hardware audio latency and USB MIDI not yet verified."
+          fi
       - name: Upload debug APK
         if: success()
         uses: actions/upload-artifact@v4
