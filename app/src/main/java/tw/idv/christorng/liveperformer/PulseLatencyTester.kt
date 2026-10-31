@@ -18,6 +18,36 @@ object PulseLatencyTester {
     private const val CHIRP = RATE / 50
     private const val CAPTURE = RATE * 2
 
+    /** Uses valid microphone detections only. Failed captures are not treated as zero latency. */
+    fun summarize(measurements: List<String>, xrunBefore: Int, xrunAfter: Int): String {
+        val pattern = Regex("輸出 callback → 麥克風捕捉：([0-9]+(?:\\.[0-9]+)?) ms")
+        val confidence = Regex("相關性 ([0-9]+(?:\\.[0-9]+)?)")
+        val valid = measurements.mapNotNull { result ->
+            pattern.find(result)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+        }.sorted()
+        val xrun = if (xrunBefore >= 0 && xrunAfter >= 0)
+            "xRuns：$xrunBefore → $xrunAfter（增加 ${xrunAfter - xrunBefore}）"
+        else "xRuns：裝置未提供"
+        if (valid.isEmpty()) {
+            val reason = measurements.firstOrNull() ?: "沒有有效結果"
+            return "有效 0 / ${measurements.size} 次。$xrun\n$reason"
+        }
+        val mean = valid.average()
+        val median = valid[valid.size / 2]
+        val p95 = valid[kotlin.math.ceil(valid.size * 0.95).toInt().coerceIn(1, valid.size) - 1]
+        val confidenceValues = measurements.mapNotNull {
+            confidence.find(it)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+        }
+        fun f(v: Double) = String.format(Locale.US, "%.1f", v)
+        val confidenceText = if (confidenceValues.isEmpty()) "" else
+            " · 平均相關性 " + String.format(Locale.US, "%.2f", confidenceValues.average())
+        return "有效 ${valid.size} / ${measurements.size} 次 · callback → 麥克風\n" +
+            "平均 ${f(mean)} ms · 中位數 ${f(median)} ms\n" +
+            "最小 ${f(valid.first())} · P95 ${f(p95)} · 最大 ${f(valid.last())} ms\n" +
+            "$xrun$confidenceText\n" +
+            "不是實體 MIDI 按鍵到耳機延遲；3–5 次的 P95 僅供初步參考。"
+    }
+
     fun measure(): String {
         val fmt = AudioFormat.Builder().setSampleRate(RATE)
             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)

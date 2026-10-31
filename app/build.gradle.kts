@@ -13,8 +13,8 @@ android {
         applicationId = "tw.idv.christorng.liveperformer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.1.2"
+        versionCode = 4
+        versionName = "0.1.3"
         ndk { abiFilters += listOf("arm64-v8a") }
         externalNativeBuild {
             cmake {
@@ -60,6 +60,7 @@ dependencies {
     implementation("com.google.oboe:oboe:1.11.0")
     // Provides libfluidsynth.so for the NDK-side dynamically loaded API.
     implementation("net.volcanomobile.fluidsynth-android:fluidsynth-android:2.4.6")
+    testImplementation("junit:junit:4.13.2")
 }
 
 val gmSf2 = layout.projectDirectory.file("src/main/assets/GeneralUser-GS.sf2").asFile

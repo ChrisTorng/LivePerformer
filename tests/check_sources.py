@@ -18,7 +18,7 @@ manifest=(root/'app/src/main/AndroidManifest.xml').read_text()
 for required in ('isSystemInDarkTheme()', 'dynamicDarkColorScheme(context)', 'dynamicLightColorScheme(context)', 'WindowCompat.setDecorFitsSystemWindows(window, false)', 'windowInsetsPadding(WindowInsets.safeDrawing)', 'isAppearanceLightStatusBars = !darkMode', 'isAppearanceLightNavigationBars = !darkMode'):
     assert required in activity, required
 assert 'Theme.Material.Light.NoActionBar' not in manifest
-assert '播放測試音' in activity and '不會量測延遲' in activity
+assert '播放測試音' in activity and 'Surface(modifier = Modifier.fillMaxSize()' in activity
 print('PASS: system theme, system bar insets, and diagnostic button labeling')
 
 activity=(root/'app/src/main/java/tw/idv/christorng/liveperformer/MainActivity.kt').read_text()
@@ -33,5 +33,15 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.1.2' in workflow and 'versionCode = 3' in gradle
+assert 'v0.1.3' in workflow and 'versionCode = 4' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
+
+parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
+store=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontLibrary.kt').read_text()
+assert 'id == "phdr"' in parser and 'id == "INAM"' in parser
+assert 'fun existingFor' in store and 'fun remove' in store
+assert 'NativeEngine.selectPreset' in activity
+assert 'PulseLatencyTester.summarize' in activity
+assert 'NativeEngine.xrunCount()' in activity
+assert 'testDebugUnitTest' in workflow
+print('PASS: SoundFont registry, real SF2 presets, dark theme and measured xRun deltas')

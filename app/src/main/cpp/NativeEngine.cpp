@@ -34,6 +34,7 @@ struct FluidApi {
     void (*delete_synth)(fluid_synth_t*){};
     int (*sfload)(fluid_synth_t*, const char*, int){};
     int (*program)(fluid_synth_t*, int, int){};
+    int (*program_select)(fluid_synth_t*, int, int, int, int){};
     int (*noteon)(fluid_synth_t*, int, int, int){};
     int (*noteoff)(fluid_synth_t*, int, int){};
     int (*cc)(fluid_synth_t*, int, int, int){};
@@ -51,6 +52,7 @@ struct FluidApi {
         delete_synth = &delete_fluid_synth;
         sfload = &fluid_synth_sfload;
         program = &fluid_synth_program_change;
+        program_select = &fluid_synth_program_select;
         noteon = &fluid_synth_noteon;
         noteoff = &fluid_synth_noteoff;
         cc = &fluid_synth_cc;
@@ -67,6 +69,7 @@ struct SynthInstance {
     FluidApi* api;
     fluid_settings_t* settings;
     fluid_synth_t* synth;
+    int sfId{-1};
     explicit SynthInstance(FluidApi* a, int rate) : api(a), settings(a->new_settings()), synth(nullptr) {
         if (!settings) return;
         api->settings_setnum(settings, "synth.sample-rate", rate);
@@ -143,7 +146,7 @@ public:
         if (!running_) return false;
         // The UI serializes loads; the audio callback must never block for disk IO.
         auto* ready = new SynthInstance(&api_, sampleRate_.load());
-        if (!ready->valid() || api_.sfload(ready->synth, filename, 1) < 0) { delete ready; return false; }
+        if (!ready->valid() || (ready->sfId = api_.sfload(ready->synth, filename, 1)) < 0) { delete ready; return false; }
         // Wait only on the background loader. Never wait in a callback/UI thread.
         while (pending_.load(std::memory_order_acquire) || retired_.load(std::memory_order_acquire)) {
             collectRetired();
@@ -163,6 +166,12 @@ public:
     }
     void silence() noexcept { note(lp::MidiType::AllSoundsOff, 0, 0, 0); }
     int64_t lastPulseNs() const noexcept { return lastPulseNs_.load(std::memory_order_acquire); }
+    int xrunCount() {
+        std::lock_guard<std::mutex> lock(controlMutex_);
+        if (!stream_) return -1;
+        auto value = stream_->getXRunCount();
+        return value.error() == oboe::Result::OK ? value.value() : -1;
+    }
     std::string status() {
         std::lock_guard<std::mutex> lock(controlMutex_);
         if (!stream_) return "Audio: stopped";
@@ -204,6 +213,9 @@ public:
                 case lp::MidiType::Controller: api_.cc(active_->synth, c, event.data1, event.data2); break;
                 case lp::MidiType::PitchBend: api_.pitch_bend(active_->synth, c, event.data2); break;
                 case lp::MidiType::Program: api_.program(active_->synth, c, event.data1); break;
+                case lp::MidiType::PresetSelect:
+                    api_.program_select(active_->synth, c, active_->sfId, event.data2, event.data1);
+                    break;
                 case lp::MidiType::AllSoundsOff:
                     for (int ch = 0; ch < 16; ++ch) api_.sounds_off(active_->synth, ch);
                     break;
@@ -247,8 +259,11 @@ JNIEXPORT jboolean JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_loa
 }
 JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_collectRetired(JNIEnv*, jobject) { engine().collectRetired(); }
 JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_midi(JNIEnv*, jobject, jint type, jint channel, jint a, jint b) {
-    if (type < 0 || type > 6) return;
+    if (type < 0 || type > 7) return;
     engine().note(static_cast<lp::MidiType>(type), channel, a, b);
+}
+JNIEXPORT jint JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_xrunCount(JNIEnv*, jobject) {
+    return engine().xrunCount();
 }
 JNIEXPORT jlong JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_lastPulseNs(JNIEnv*, jobject) {
     return engine().lastPulseNs();
