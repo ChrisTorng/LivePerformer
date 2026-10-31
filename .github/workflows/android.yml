@@ -28,6 +28,25 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
+      - name: Restore persistent development signing key
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          KEY=app/dev-signing.keystore
+          if gh release view dev-signing-key >/dev/null 2>&1; then
+            gh release download dev-signing-key --pattern liveperformer-dev.keystore --dir .
+            mv liveperformer-dev.keystore "$KEY"
+          else
+            keytool -genkeypair -noprompt -keystore "$KEY" -storepass android -keypass android \\
+              -alias liveperformer-dev -keyalg RSA -keysize 3072 -validity 10000 \\
+              -dname 'CN=LivePerformer DEV ONLY, OU=Public Test Signing, O=LivePerformer, C=TW'
+            cp "$KEY" liveperformer-dev.keystore
+            gh release create dev-signing-key liveperformer-dev.keystore --target "$GITHUB_SHA" \\
+              --title 'Public test-only signing key (never use for production)' --prerelease \\
+              --notes 'PUBLIC development key. Anyone can sign APKs with this key. Do not use for production releases. The previous ephemeral debug certificate cannot be reused. One-time uninstall may be required.'
+          fi
+          keytool -list -v -keystore "$KEY" -storepass android | grep 'SHA256:'
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace --no-daemon
       - name: Verify APK packaging
@@ -45,16 +64,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk LivePerformer-v0.1.1-debug.apk
-          zip -9 LivePerformer-v0.1.1-debug.zip LivePerformer-v0.1.1-debug.apk
-          sha256sum LivePerformer-v0.1.1-debug.apk > LivePerformer-v0.1.1-debug.sha256
-          TAG=v0.1.1-dev
+          cp app/build/outputs/apk/debug/app-debug.apk LivePerformer-v0.1.2-debug.apk
+          zip -9 LivePerformer-v0.1.2-debug.zip LivePerformer-v0.1.2-debug.apk
+          sha256sum LivePerformer-v0.1.2-debug.apk > LivePerformer-v0.1.2-debug.sha256
+          TAG=v0.1.2-dev
           if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" LivePerformer-v0.1.1-debug.apk LivePerformer-v0.1.1-debug.zip LivePerformer-v0.1.1-debug.sha256 --clobber
+            gh release upload "$TAG" LivePerformer-v0.1.2-debug.apk LivePerformer-v0.1.2-debug.zip LivePerformer-v0.1.2-debug.sha256 --clobber
           else
-            gh release create "$TAG" LivePerformer-v0.1.1-debug.apk LivePerformer-v0.1.1-debug.zip LivePerformer-v0.1.1-debug.sha256 \
+            gh release create "$TAG" LivePerformer-v0.1.2-debug.apk LivePerformer-v0.1.2-debug.zip LivePerformer-v0.1.2-debug.sha256 \
               --target "$GITHUB_SHA" --prerelease \
-              --title "LivePerformer v0.1.1 Android debug" \
+              --title "LivePerformer v0.1.2 Android debug" \
               --notes "Experimental Android debug build. Hardware audio latency and USB MIDI not yet verified."
           fi
       - name: Upload debug APK

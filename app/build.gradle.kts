@@ -13,13 +13,24 @@ android {
         applicationId = "tw.idv.christorng.liveperformer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.1.2"
         ndk { abiFilters += listOf("arm64-v8a") }
         externalNativeBuild {
             cmake {
                 cppFlags += listOf("-std=c++17", "-O3", "-fexceptions")
                 arguments += listOf("-DANDROID_STL=c++_shared")
+            }
+        }
+    }
+    signingConfigs {
+        getByName("debug") {
+            val persistentDevKey = rootProject.file("app/dev-signing.keystore")
+            if (persistentDevKey.exists()) {
+                storeFile = persistentDevKey
+                storePassword = "android"
+                keyAlias = "liveperformer-dev"
+                keyPassword = "android"
             }
         }
     }
@@ -44,6 +55,8 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.foundation:foundation")
+    implementation("org.apache.commons:commons-compress:1.28.0")
+    implementation("org.tukaani:xz:1.10")
     implementation("com.google.oboe:oboe:1.11.0")
     // Provides libfluidsynth.so for the NDK-side dynamically loaded API.
     implementation("net.volcanomobile.fluidsynth-android:fluidsynth-android:2.4.6")

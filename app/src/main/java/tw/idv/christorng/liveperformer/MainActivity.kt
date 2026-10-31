@@ -95,15 +95,8 @@ private fun PerformerScreen() {
         if (uri != null) scope.launch {
             message = "正在匯入 SoundFont…"
             try {
-                val name = "imported-${System.currentTimeMillis()}.sf2"
-                val file = File(context.filesDir, name)
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        file.outputStream().use { input.copyTo(it) }
-                    } ?: error("Cannot open file")
-                    require(file.length() in 128L..700_000_000L) { "Unexpected file size" }
-                }
-                loadFont(file.absolutePath, uri.lastPathSegment?.substringAfterLast('/') ?: name)
+                val file = withContext(Dispatchers.IO) { SoundFontImporter.import(context, uri) }
+                loadFont(file.absolutePath, "匯入音色（" + file.name + "）")
             } catch (ex: Exception) { message = "匯入失敗：${ex.message}" }
         }
     }
@@ -169,8 +162,8 @@ private fun PerformerScreen() {
                     } catch (ex: Exception) { message = "載入失敗：${ex.message}" }
                 }
             }) { Text("預設 GM") }
-            OutlinedButton(onClick = { picker.launch(arrayOf("application/octet-stream", "application/x-soundfont", "*/*")) }) {
-                Text("匯入 SF2")
+            OutlinedButton(onClick = { picker.launch(arrayOf("*/*")) }) {
+                Text("匯入 SF2 / ZIP / XZ")
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
