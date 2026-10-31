@@ -18,7 +18,7 @@ manifest=(root/'app/src/main/AndroidManifest.xml').read_text()
 for required in ('isSystemInDarkTheme()', 'dynamicDarkColorScheme(context)', 'dynamicLightColorScheme(context)', 'WindowCompat.setDecorFitsSystemWindows(window, false)', 'windowInsetsPadding(WindowInsets.safeDrawing)', 'isAppearanceLightStatusBars = !darkMode', 'isAppearanceLightNavigationBars = !darkMode'):
     assert required in activity, required
 assert 'Theme.Material.Light.NoActionBar' not in manifest
-assert '播放測試音' in activity and '不會進行麥克風回錄' in activity
+assert '播放測試音' in activity and '不會量測延遲' in activity
 print('PASS: system theme, system bar insets, and diagnostic button labeling')
 
 activity=(root/'app/src/main/java/tw/idv/christorng/liveperformer/MainActivity.kt').read_text()
