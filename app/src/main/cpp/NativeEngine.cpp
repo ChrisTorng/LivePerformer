@@ -171,7 +171,7 @@ public:
         if (!stream_) return "Audio: stopped";
         char buf[300];
         auto xr = stream_->getXRunCount();
-        const int xruns = xr.ok() ? xr.value() : -1;
+        const int xruns = xr.error() == oboe::Result::OK ? xr.value() : -1;
         std::snprintf(buf, sizeof(buf), "%d Hz · burst %d · buffer %d frames · %s · %s · xRuns %d · MIDI→callback %lld µs · drops %llu",
             stream_->getSampleRate(), stream_->getFramesPerBurst(), stream_->getBufferSizeInFrames(),
             stream_->getAudioApi() == oboe::AudioApi::AAudio ? "AAudio" : "OpenSL ES",
