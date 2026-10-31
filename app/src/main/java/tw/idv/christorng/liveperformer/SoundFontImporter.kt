@@ -12,7 +12,7 @@ import java.util.zip.ZipInputStream
 /** Supports original SF2, ZIP containing SF2, and FreePats TAR.XZ.
  * Extracts a single SF2 into private app storage, never trusting archive paths. */
 object SoundFontImporter {
-    private const val MAX_SIZE = 1_200_000_000L
+    private const val MAX_SIZE = 2_000_000_000L
 
     fun extract(context: Context, uri: Uri): File {
         val target = File(context.filesDir, "imported-" + System.currentTimeMillis() + ".sf2")
@@ -85,7 +85,7 @@ object SoundFontImporter {
                 val n = input.read(buf)
                 if (n < 0) break
                 total += n
-                check(total <= MAX_SIZE) { "SoundFont 超過 1.2 GB 安全限制" }
+                check(total <= MAX_SIZE) { "SoundFont 超過 2 GB 安全限制" }
                 output.write(buf, 0, n)
             }
         }

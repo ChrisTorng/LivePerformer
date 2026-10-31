@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
+      - uses: actions/checkout@v4
       - name: Download source archive from FreePats
         run: |
           curl --fail --location --retry 5 --retry-delay 5 --connect-timeout 30 --max-time 1200 \
@@ -33,6 +34,7 @@ jobs:
       - name: Publish ZIP and checksums
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           TAG=salamander-sf2-v3
           if gh release view "$TAG" >/dev/null 2>&1; then
