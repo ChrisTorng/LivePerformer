@@ -17,7 +17,8 @@ jobs:
             'https://freepats.zenvoid.org/Piano/SalamanderGrandPiano/SalamanderGrandPiano-SF2-V3%2B20200602.tar.xz' \
             -o /tmp/Salamander.sf2.tar.xz
           test "$(stat -c '%s' /tmp/Salamander.sf2.tar.xz)" -gt 200000000
-          tar -tJf /tmp/Salamander.sf2.tar.xz | head -30
+          tar -tJf /tmp/Salamander.sf2.tar.xz > /tmp/salamander-files.txt
+          head -30 /tmp/salamander-files.txt
       - name: Create ZIP containing only the SF2
         run: |
           mkdir -p /tmp/salamander
