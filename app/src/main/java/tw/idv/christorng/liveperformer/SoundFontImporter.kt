@@ -14,7 +14,7 @@ import java.util.zip.ZipInputStream
 object SoundFontImporter {
     private const val MAX_SIZE = 1_200_000_000L
 
-    fun import(context: Context, uri: Uri): File {
+    fun extract(context: Context, uri: Uri): File {
         val target = File(context.filesDir, "imported-" + System.currentTimeMillis() + ".sf2")
         val part = File(context.filesDir, target.name + ".part")
         try {

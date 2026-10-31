@@ -95,7 +95,7 @@ private fun PerformerScreen() {
         if (uri != null) scope.launch {
             message = "正在匯入 SoundFont…"
             try {
-                val file = withContext(Dispatchers.IO) { SoundFontImporter.import(context, uri) }
+                val file = withContext(Dispatchers.IO) { SoundFontImporter.extract(context, uri) }
                 loadFont(file.absolutePath, "匯入音色（" + file.name + "）")
             } catch (ex: Exception) { message = "匯入失敗：${ex.message}" }
         }
