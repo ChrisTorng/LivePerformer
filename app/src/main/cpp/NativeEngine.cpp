@@ -2,7 +2,7 @@
 #include <oboe/Oboe.h>
 #include <jni.h>
 #include <android/log.h>
-#include <dlfcn.h>
+#include <fluidsynth.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -21,13 +21,11 @@ int64_t nowNs() noexcept {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count();
 }
 
-struct fluid_settings_t;
-struct fluid_synth_t;
 
 // Load the library delivered by fluidsynth-android AAR at runtime.
 // This lets the C++ core keep a narrow, portable FluidSynth API boundary.
 struct FluidApi {
-    void* handle{};
+    bool initialized{};
     fluid_settings_t* (*new_settings)(){};
     void (*delete_settings)(fluid_settings_t*){};
     int (*settings_setnum)(fluid_settings_t*, const char*, double){};
@@ -44,25 +42,22 @@ struct FluidApi {
     int (*write_float)(fluid_synth_t*, int, void*, int, int, void*, int, int){};
 
     bool init() {
-        if (handle) return true;
-        handle = dlopen("libfluidsynth.so", RTLD_NOW | RTLD_LOCAL);
-        if (!handle) { __android_log_print(ANDROID_LOG_ERROR, TAG, "FluidSynth: %s", dlerror()); return false; }
-#define FLUID_SYM(member, symbol) member = reinterpret_cast<decltype(member)>(dlsym(handle, symbol)); if (!member) return false
-        FLUID_SYM(new_settings, "new_fluid_settings");
-        FLUID_SYM(delete_settings, "delete_fluid_settings");
-        FLUID_SYM(settings_setnum, "fluid_settings_setnum");
-        FLUID_SYM(settings_setint, "fluid_settings_setint");
-        FLUID_SYM(new_synth, "new_fluid_synth");
-        FLUID_SYM(delete_synth, "delete_fluid_synth");
-        FLUID_SYM(sfload, "fluid_synth_sfload");
-        FLUID_SYM(program, "fluid_synth_program_change");
-        FLUID_SYM(noteon, "fluid_synth_noteon");
-        FLUID_SYM(noteoff, "fluid_synth_noteoff");
-        FLUID_SYM(cc, "fluid_synth_cc");
-        FLUID_SYM(pitch_bend, "fluid_synth_pitch_bend");
-        FLUID_SYM(sounds_off, "fluid_synth_all_sounds_off");
-        FLUID_SYM(write_float, "fluid_synth_write_float");
-#undef FLUID_SYM
+        if (initialized) return true;
+        new_settings = &new_fluid_settings;
+        delete_settings = &delete_fluid_settings;
+        settings_setnum = &fluid_settings_setnum;
+        settings_setint = &fluid_settings_setint;
+        new_synth = &new_fluid_synth;
+        delete_synth = &delete_fluid_synth;
+        sfload = &fluid_synth_sfload;
+        program = &fluid_synth_program_change;
+        noteon = &fluid_synth_noteon;
+        noteoff = &fluid_synth_noteoff;
+        cc = &fluid_synth_cc;
+        pitch_bend = &fluid_synth_pitch_bend;
+        sounds_off = &fluid_synth_all_sounds_off;
+        write_float = &fluid_synth_write_float;
+        initialized = true;
         return true;
     }
 };

@@ -5,7 +5,7 @@
 ## MVP
 
 - Native Oboe / AAudio low-latency stereo output (try Exclusive, fall back to Shared).
-- FluidSynth 2.4.6 SF2 synthesis via a dynamically loaded Android AAR.
+- FluidSynth 2.4.6 SF2 synthesis via a directly linked Android Prefab AAR.
 - Auto-discovery of USB MIDI devices, notes, velocity, pedal CC64, program change and pitch bend.
 - 128 GM instrument menu, two-octave multitouch piano keyboard, octave shift, adjustable on-screen velocity.
 - Automatic first-launch GeneralUser GS bank; imported SF2 supports Salamander Grand Piano.
@@ -22,7 +22,7 @@
 ## Important limitations / test status
 
 - No Android SDK/NDK or network access to Maven artifacts is available in the current code-generation environment. **APK compilation and hardware latency have not been verified.** Do not treat this as a shipped APK.
-- FluidSynth's Android AAR is provided by the third-party `net.volcanomobile.fluidsynth-android` project. The application loads `libfluidsynth.so` at runtime; ABI packaging and its native dependency loading must be verified by a real Android build and install.
+- FluidSynth's Android AAR is provided by the third-party `net.volcanomobile.fluidsynth-android` project. The application links FluidSynth through Prefab so the required native library can be packaged and checked by Android CI; device testing remains necessary.
 - MIDI is currently processed at the next Oboe callback boundary (buffer-quantized), not sample-accurate. The displayed MIDI→callback time is **not** the actual press-to-sound latency.
 - The test burst only provides an output stimulus; acoustic/microphone loopback correlation and end-to-end hardware latency measurement have **not** yet been implemented.
 - The app is arm64-v8a only for the first target. For Windows, reuse the native sound synthesis + event queue, but implement WASAPI/ASIO and MIDI adapters independently.
