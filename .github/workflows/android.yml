@@ -22,7 +22,7 @@ jobs:
         with:
           packages: 'platform-tools'
       - name: Install Android platform and native tools
-        run: sdkmanager --install 'platforms;android-36' 'ndk;27.2.12479018' 'cmake;3.22.1'
+        run: sdkmanager --install 'platforms;android-37' 'ndk;27.2.12479018' 'cmake;3.22.1'
       - name: Native queue and source checks
         run: bash tests/run_tests.sh
       - uses: gradle/actions/setup-gradle@v4
@@ -34,9 +34,12 @@ jobs:
         run: |
           APK=app/build/outputs/apk/debug/app-debug.apk
           test -s "$APK"
-          unzip -Z1 "$APK" | grep -Fq 'lib/arm64-v8a/libliveperformer.so'
-          unzip -Z1 "$APK" | grep -Fq 'lib/arm64-v8a/libfluidsynth.so'
-          unzip -Z1 "$APK" | grep -Fq 'assets/GeneralUser-GS.sf2'
+          unzip -Z1 "$APK" > apk-entries.txt
+          grep -Fq 'lib/arm64-v8a/libliveperformer.so'
+          unzip -Z1 "$APK" > apk-entries.txt
+          grep -Fq 'lib/arm64-v8a/libfluidsynth.so'
+          unzip -Z1 "$APK" > apk-entries.txt
+          grep -Fq 'assets/GeneralUser-GS.sf2'
       - name: Publish installable debug APK
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:

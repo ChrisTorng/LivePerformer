@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "tw.idv.christorng.liveperformer"
-    compileSdk = 36
+    compileSdk = 37
     defaultConfig {
         applicationId = "tw.idv.christorng.liveperformer"
         minSdk = 26
