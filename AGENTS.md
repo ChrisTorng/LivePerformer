@@ -6,3 +6,5 @@
 - v0.1 includes USB MIDI, multitouch keyboard, GM instrument selection, SF2 loading and diagnostics. No Loop yet.
 - Use concise PR/change descriptions. Link directly to CI results and APK download.
 - Never describe an APK as device-verified without actual device tests.
+
+- The development signing key is publicly recoverable from the dedicated GitHub prerelease and is ONLY for disposable development builds. Do not treat it as a secret or use it to sign production builds. Future production builds must use a private keystore in repository secrets.

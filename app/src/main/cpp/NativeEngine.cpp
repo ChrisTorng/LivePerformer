@@ -99,6 +99,7 @@ class Engine final : public oboe::AudioStreamDataCallback {
     std::atomic<uint64_t> dropped_{0};
     std::atomic<int> sampleRate_{48000};
     std::atomic<int> testSamples_{0};
+    std::atomic<int64_t> lastPulseNs_{0};
     std::atomic<uint32_t> noiseState_{1};
 
 public:
@@ -161,6 +162,7 @@ public:
         if (!events_.push(ev)) { dropped_.fetch_add(1); overrun_.store(true); }
     }
     void silence() noexcept { note(lp::MidiType::AllSoundsOff, 0, 0, 0); }
+    int64_t lastPulseNs() const noexcept { return lastPulseNs_.load(std::memory_order_acquire); }
     std::string status() {
         std::lock_guard<std::mutex> lock(controlMutex_);
         if (!stream_) return "Audio: stopped";
@@ -189,7 +191,11 @@ public:
         lp::MidiEvent event;
         // MIDI processing is buffer-quantized in v0.1. Future versions will schedule sample offsets.
         while (events_.pop(event)) {
-            if (event.type == lp::MidiType::TestPulse) { testSamples_.store(sampleRate_.load() / 30); continue; }
+            if (event.type == lp::MidiType::TestPulse) {
+                testSamples_.store(sampleRate_.load() / 50);
+                lastPulseNs_.store(nowNs(), std::memory_order_release);
+                continue;
+            }
             if (!active_) continue;
             const int c = event.channel;
             switch (event.type) {
@@ -209,15 +215,19 @@ public:
         if (active_) api_.write_float(active_->synth, frames, output, 0, 2, output, 1, 2);
         else std::memset(output, 0, sizeof(float) * frames * 2);
         int remaining = testSamples_.load(std::memory_order_relaxed);
-        uint32_t state = noiseState_.load(std::memory_order_relaxed);
+        const int sampleRate = sampleRate_.load(std::memory_order_relaxed);
+        const int chirpLength = std::max(1, sampleRate / 50);
+        constexpr double PI = 3.14159265358979323846;
+        const double duration = double(chirpLength) / sampleRate;
         for (int i = 0; i < frames && remaining > 0; ++i, --remaining) {
-            state ^= state << 13; state ^= state >> 17; state ^= state << 5;
-            const float env = std::min(1.f, remaining / (sampleRate_.load() * .003f));
-            const float value = ((state & 0xffff) / 32768.f - 1.f) * env * .20f;
-            output[2*i] += value;
-            output[2*i+1] += value;
+            const int p = chirpLength - remaining;
+            const double t = double(p) / sampleRate;
+            const double edge = std::sin(PI * p / chirpLength);
+            const double phase = 2.0 * PI * (600.0 * t + 0.5 * 4000.0 * t * t / duration);
+            const float signal = static_cast<float>(0.24 * edge * edge * std::sin(phase));
+            output[2*i] += signal;
+            output[2*i+1] += signal;
         }
-        noiseState_.store(state, std::memory_order_relaxed);
         testSamples_.store(remaining, std::memory_order_relaxed);
         return oboe::DataCallbackResult::Continue;
     }
@@ -239,6 +249,9 @@ JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_collect
 JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_midi(JNIEnv*, jobject, jint type, jint channel, jint a, jint b) {
     if (type < 0 || type > 6) return;
     engine().note(static_cast<lp::MidiType>(type), channel, a, b);
+}
+JNIEXPORT jlong JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_lastPulseNs(JNIEnv*, jobject) {
+    return engine().lastPulseNs();
 }
 JNIEXPORT jstring JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_status(JNIEnv* env, jobject) {
     return env->NewStringUTF(engine().status().c_str());

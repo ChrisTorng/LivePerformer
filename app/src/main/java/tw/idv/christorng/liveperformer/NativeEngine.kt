@@ -8,6 +8,7 @@ object NativeEngine {
     external fun collectRetired()
     external fun midi(type: Int, channel: Int, a: Int, b: Int)
     external fun status(): String
+    external fun lastPulseNs(): Long
 
     const val NOTE_ON = 0
     const val NOTE_OFF = 1

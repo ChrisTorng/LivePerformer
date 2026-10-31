@@ -1,11 +1,8 @@
 .gradle/
-.idea/
-**/build/
-.cxx/
+build/
+app/build/
 local.properties
+.idea/
 *.iml
 app/src/main/assets/*.sf2
-app/src/main/assets/*.sf3
-*.apk
-
-app/src/main/assets/*.sf2
+app/dev-signing.keystore

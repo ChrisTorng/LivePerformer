@@ -1,6 +1,9 @@
 package tw.idv.christorng.liveperformer
 
 import android.os.Bundle
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import android.os.Build
 import androidx.core.view.WindowCompat
 import androidx.compose.foundation.background
@@ -91,19 +94,25 @@ private fun PerformerScreen() {
             message = "$display 已載入"
         } else message = "SoundFont 載入失敗；請檢查檔案／音訊引擎"
     }
+    var measuring by remember { mutableStateOf(false) }
+    var measurement by remember { mutableStateOf("尚未量測。需用喇叭或有線回錄才能由麥克風收音。") }
+    fun measure() {
+        scope.launch {
+            measuring = true
+            measurement = "錄音及相關性分析中…"
+            measurement = withContext(Dispatchers.IO) { PulseLatencyTester.measure() }
+            measuring = false
+        }
+    }
+    val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) measure() else measurement = "未授予麥克風權限，無法量測。"
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             message = "正在匯入 SoundFont…"
             try {
-                val name = "imported-${System.currentTimeMillis()}.sf2"
-                val file = File(context.filesDir, name)
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        file.outputStream().use { input.copyTo(it) }
-                    } ?: error("Cannot open file")
-                    require(file.length() in 128L..700_000_000L) { "Unexpected file size" }
-                }
-                loadFont(file.absolutePath, uri.lastPathSegment?.substringAfterLast('/') ?: name)
+                val file = withContext(Dispatchers.IO) { SoundFontImporter.extract(context, uri) }
+                loadFont(file.absolutePath, "匯入音色（" + file.name + "）")
             } catch (ex: Exception) { message = "匯入失敗：${ex.message}" }
         }
     }
@@ -140,7 +149,10 @@ private fun PerformerScreen() {
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text("LivePerformer", style = MaterialTheme.typography.headlineMedium)
-        Text("低延遲鋼琴 · Android v0.1", style = MaterialTheme.typography.labelMedium)
+        val version = remember {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
+        }
+        Text("低延遲鋼琴 · Android v$version", style = MaterialTheme.typography.labelMedium)
         Text(message, style = MaterialTheme.typography.bodyMedium)
         Text(midiStatus, style = MaterialTheme.typography.bodySmall)
         ExposedDropdownMenuBox(expanded = showPrograms, onExpandedChange = { showPrograms = it }) {
@@ -169,8 +181,8 @@ private fun PerformerScreen() {
                     } catch (ex: Exception) { message = "載入失敗：${ex.message}" }
                 }
             }) { Text("預設 GM") }
-            OutlinedButton(onClick = { picker.launch(arrayOf("application/octet-stream", "application/x-soundfont", "*/*")) }) {
-                Text("匯入 SF2")
+            OutlinedButton(onClick = { picker.launch(arrayOf("*/*")) }) {
+                Text("匯入 SF2 / ZIP / XZ")
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -188,11 +200,19 @@ private fun PerformerScreen() {
         Text("音訊診斷", style = MaterialTheme.typography.titleMedium)
         Text(audioStatus, style = MaterialTheme.typography.bodySmall)
         Text("MIDI→callback 是軟體內部排程時間，不等於耳機實際發聲延遲。", style = MaterialTheme.typography.bodySmall)
-        Text("播放測試音只會發出短聲，不會進行麥克風回錄或量測實際延遲。", style = MaterialTheme.typography.bodySmall)
+        Text("播放測試音只驗證發聲，不會量測延遲。", style = MaterialTheme.typography.bodySmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { NativeEngine.midi(NativeEngine.TEST_PULSE, 0, 0, 0) }) { Text("播放測試音") }
             OutlinedButton(onClick = { NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0) }) { Text("全部停止") }
         }
-        Text("可匯入 Salamander Grand Piano SF2，比較 GM 與高品質鋼琴。錄製與 Loop 暫不提供。", style = MaterialTheme.typography.bodySmall)
+        Text("回錄量測：", style = MaterialTheme.typography.titleSmall)
+        Text(measurement, style = MaterialTheme.typography.bodySmall)
+        Button(enabled = !measuring, onClick = {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED) measure()
+            else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+        }) { Text(if (measuring) "量測中…" else "量測麥克風回錄") }
+        Text("請用喇叭播放並讓麥克風收到測試音，或使用有線回錄介面。只戴耳機無法測量。", style = MaterialTheme.typography.bodySmall)
+        Text("可匯入 Salamander Grand Piano SF2、ZIP 或 TAR.XZ；錄製與 Loop 暫不提供。", style = MaterialTheme.typography.bodySmall)
     }
 }
