@@ -47,6 +47,8 @@ jobs:
               --notes 'PUBLIC development key. Anyone can sign APKs with this key. Do not use for production releases. The previous ephemeral debug certificate cannot be reused. One-time uninstall may be required.'
           fi
           keytool -list -v -keystore "$KEY" -storepass android | grep 'SHA256:'
+      - name: Test SF2 preset parser
+        run: gradle :app:testDebugUnitTest --stacktrace --no-daemon
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace --no-daemon
       - name: Verify APK packaging
@@ -64,16 +66,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk LivePerformer-v0.1.2-debug.apk
-          zip -9 LivePerformer-v0.1.2-debug.zip LivePerformer-v0.1.2-debug.apk
-          sha256sum LivePerformer-v0.1.2-debug.apk > LivePerformer-v0.1.2-debug.sha256
-          TAG=v0.1.2-dev
+          cp app/build/outputs/apk/debug/app-debug.apk LivePerformer-v0.1.3-debug.apk
+          zip -9 LivePerformer-v0.1.3-debug.zip LivePerformer-v0.1.3-debug.apk
+          sha256sum LivePerformer-v0.1.3-debug.apk > LivePerformer-v0.1.3-debug.sha256
+          TAG=v0.1.3-dev
           if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" LivePerformer-v0.1.2-debug.apk LivePerformer-v0.1.2-debug.zip LivePerformer-v0.1.2-debug.sha256 --clobber
+            gh release upload "$TAG" LivePerformer-v0.1.3-debug.apk LivePerformer-v0.1.3-debug.zip LivePerformer-v0.1.3-debug.sha256 --clobber
           else
-            gh release create "$TAG" LivePerformer-v0.1.2-debug.apk LivePerformer-v0.1.2-debug.zip LivePerformer-v0.1.2-debug.sha256 \
+            gh release create "$TAG" LivePerformer-v0.1.3-debug.apk LivePerformer-v0.1.3-debug.zip LivePerformer-v0.1.3-debug.sha256 \
               --target "$GITHUB_SHA" --prerelease \
-              --title "LivePerformer v0.1.2 Android debug" \
+              --title "LivePerformer v0.1.3 Android debug" \
               --notes "Experimental Android debug build. Hardware audio latency and USB MIDI not yet verified."
           fi
       - name: Upload debug APK
