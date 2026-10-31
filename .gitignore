@@ -1,0 +1,11 @@
+.gradle/
+.idea/
+**/build/
+.cxx/
+local.properties
+*.iml
+app/src/main/assets/*.sf2
+app/src/main/assets/*.sf3
+*.apk
+
+app/src/main/assets/*.sf2
