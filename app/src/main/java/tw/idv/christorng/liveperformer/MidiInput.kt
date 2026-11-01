@@ -11,7 +11,11 @@ import android.os.HandlerThread
 import java.util.concurrent.ConcurrentHashMap
 
 /** Android MIDI port messages are forwarded without sending them through Compose state. */
-class MidiInput(context: Context, private val onDevicesChanged: (String) -> Unit) {
+class MidiInput(
+    context: Context,
+    private val onDevicesChanged: (String) -> Unit,
+    private val onMidi: (Int, Int, Int, Int) -> Unit = NativeEngine::midi
+) {
     private val manager = context.getSystemService(MidiManager::class.java)
     private val thread = HandlerThread("LivePerformer-MIDI").apply { start() }
     private val handler = Handler(thread.looper)
@@ -46,15 +50,15 @@ class MidiInput(context: Context, private val onDevicesChanged: (String) -> Unit
                 val a = data[i++].toInt() and 0x7F
                 val b = if (needed == 2) data[i++].toInt() and 0x7F else 0
                 when (kind) {
-                    0x80 -> NativeEngine.midi(NativeEngine.NOTE_OFF, channel, a, b)
-                    0x90 -> NativeEngine.midi(if (b == 0) NativeEngine.NOTE_OFF else NativeEngine.NOTE_ON, channel, a, b)
+                    0x80 -> onMidi(NativeEngine.NOTE_OFF, channel, a, b)
+                    0x90 -> onMidi(if (b == 0) NativeEngine.NOTE_OFF else NativeEngine.NOTE_ON, channel, a, b)
                     0xB0 -> {
                         if (a == 0) pendingMsbBank = b
                         if (a == 32) pendingLsbBank = b
-                        NativeEngine.midi(NativeEngine.CONTROLLER, channel, a, b)
+                        onMidi(NativeEngine.CONTROLLER, channel, a, b)
                     }
-                    0xC0 -> NativeEngine.midi(NativeEngine.PROGRAM, channel, a, 0)
-                    0xE0 -> NativeEngine.midi(NativeEngine.PITCH_BEND, channel, 0, a or (b shl 7))
+                    0xC0 -> onMidi(NativeEngine.PROGRAM, channel, a, 0)
+                    0xE0 -> onMidi(NativeEngine.PITCH_BEND, channel, 0, a or (b shl 7))
                 }
             }
         }

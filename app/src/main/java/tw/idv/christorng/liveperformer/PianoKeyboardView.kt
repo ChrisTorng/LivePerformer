@@ -20,6 +20,9 @@ class PianoKeyboardView(context: Context) : View(context) {
             invalidate()
         }
     var velocity = 100
+    var sendMidi: (Int, Int, Int, Int) -> Unit = NativeEngine::midi
+    private fun noteOn(note: Int, velocity: Int) = sendMidi(NativeEngine.NOTE_ON, 0, note, velocity)
+    private fun noteOff(note: Int) = sendMidi(NativeEngine.NOTE_OFF, 0, note, 0)
     private val active = SparseIntArray()
     private val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(250, 250, 248) }
     private val black = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(30, 34, 44) }
@@ -92,17 +95,17 @@ class PianoKeyboardView(context: Context) : View(context) {
     private fun updatePointer(id: Int, note: Int) {
         val previous = active.get(id, -1)
         if (previous == note) return
-        if (previous >= 0) NativeEngine.noteOff(previous)
+        if (previous >= 0) noteOff(previous)
         active.put(id, note)
-        NativeEngine.noteOn(note, velocity)
+        noteOn(note, velocity)
     }
     private fun release(id: Int) {
         val old = active.get(id, -1)
-        if (old >= 0) NativeEngine.noteOff(old)
+        if (old >= 0) noteOff(old)
         active.delete(id)
     }
     fun allNotesOff() {
-        for (i in 0 until active.size()) NativeEngine.noteOff(active.valueAt(i))
+        for (i in 0 until active.size()) noteOff(active.valueAt(i))
         active.clear()
         invalidate()
     }

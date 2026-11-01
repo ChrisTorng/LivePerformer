@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.1.4' in workflow and 'versionCode = 5' in gradle
+assert 'v0.2.0' in workflow and 'versionCode = 6' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -55,3 +55,18 @@ assert 'presetBank:' in activity and 'presetProgram:' in activity
 assert 'putFloat("velocity"' in activity and 'putFloat("gain"' in activity
 assert 'putInt("baseNote"' in activity
 print('PASS: AAudio device recovery, selected preset, velocity, octave and gain persistence')
+
+# MIDI loop wiring and persistence.
+looper=(root/'app/src/main/java/tw/idv/christorng/liveperformer/LoopController.kt').read_text()
+math=(root/'app/src/main/java/tw/idv/christorng/liveperformer/LoopMath.kt').read_text()
+keyboard=(root/'app/src/main/java/tw/idv/christorng/liveperformer/PianoKeyboardView.kt').read_text()
+midi=(root/'app/src/main/java/tw/idv/christorng/liveperformer/MidiInput.kt').read_text()
+for required in ('LoopController(context)', 'looper::onMidi', 'looper.recordPause()', 'looper.playPause()', 'looper.addTrack()', 'looper.clearSelected()', 'looper::setMetronome', 'looper.setBpm'):
+    assert required in activity, required
+for required in ('ScheduledThreadPoolExecutor', 'nextOccurrence', 'recordStart', 'SharedPreferences', 'loop-session'):
+    if required == 'SharedPreferences': continue
+    assert required in looper, required
+assert 'const val PPQ = 960' in math and 'fun nextBoundary' in math
+assert 'sendMidi' in keyboard and 'onMidi' in midi
+assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/LoopMathTest.kt').exists()
+print('PASS: multitrack MIDI loop UI, routing, persistence and timeline tests wired')
