@@ -1,9 +1,10 @@
-# LivePerformer — Android low-latency MIDI instrument (v0.1)
+# LivePerformer — Android low-latency MIDI instrument and looper (v0.2)
 
-**Status: early source prototype, not yet device-verified.** Initial target: Samsung Galaxy A25 5G, USB MIDI keyboard, wired 3.5 mm headphones. Loop/recording is intentionally not included.
+**Status: early source prototype, not yet device-verified.** Initial target: Samsung Galaxy A25 5G, USB MIDI keyboard, wired 3.5 mm headphones. v0.2 adds an experimental MIDI-only loop recorder; physical device performance remains unverified.
 
 ## MVP
 
+- Multitrack MIDI loop: play/pause, one-cycle recording/overdub, clear, tempo (40–240 BPM), 1/2/4/8 bars, metronome toggle, per-track mute, add/select/delete instruments. Default 120 BPM, two bars, and a one-bar drum pattern repeated twice. Track MIDI clips and settings persist locally. Playback uses a 4 ms Android scheduler and is **not sample-accurate**; audio synthesis remains native.
 - Native Oboe / AAudio low-latency stereo output (try Exclusive, fall back to Shared).
 - FluidSynth 2.4.6 SF2 synthesis via a directly linked Android Prefab AAR.
 - Auto-discovery of USB MIDI devices, notes, velocity, pedal CC64, program change and pitch bend.
@@ -34,6 +35,7 @@
 
 ## Next engineering priorities
 
+- Native sample-accurate looper/clock for consistent groove and future Windows reuse; MIDI event timing under Android scheduling load.
 - First device-verified APK, confirmation of FluidSynth AAR packaging, test Oboe duplex / AAudio stream behavior and xRun stability.
 - Build an independent recorder / AudioRecord cross-correlation loopback test with calibrated timestamp/latency model.
 - Sample-accurate MIDI scheduling with AAudio stream timestamps and edge-case MIDI parsing including split messages and system common.
