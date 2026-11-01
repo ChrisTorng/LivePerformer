@@ -99,7 +99,11 @@ private fun PerformerScreen() {
     val library = remember(context) { SoundFontLibrary(context) }
     val settings = remember(context) { context.getSharedPreferences("performer", Context.MODE_PRIVATE) }
     val audioManager = remember(context) { context.getSystemService(AudioManager::class.java) }
-    val keyboard = remember { PianoKeyboardView(context) }
+    val looper = remember(context) { LoopController(context) }
+    val loopState by looper.state.collectAsState()
+    val keyboard = remember(context, looper) {
+        PianoKeyboardView(context).apply { sendMidi = looper::onMidi }
+    }
     val fonts = remember { mutableStateListOf<SoundFontItem>() }
     val presets = remember { mutableStateListOf<InstrumentPreset>() }
     var selectedFontId by remember { mutableStateOf("gm") }
@@ -153,6 +157,7 @@ private fun PerformerScreen() {
                     NativeEngine.selectPreset(p.bank, p.program)
                 }
                 library.rememberSelected(item.id)
+                looper.refreshPrograms()
                 message = "${item.title} 已切換 · ${presets.size} 個音色"
             }
         } catch (ex: Exception) {
@@ -255,7 +260,7 @@ private fun PerformerScreen() {
     DisposableEffect(Unit) {
         val ready = NativeEngine.start()
         NativeEngine.setGain(gain)
-        val input = MidiInput(context) { midiStatus = it }
+        val input = MidiInput(context, { midiStatus = it }, looper::onMidi)
         if (ready) scope.launch {
             try {
                 withContext(Dispatchers.IO) { loadBundledFont(context) }
@@ -269,6 +274,7 @@ private fun PerformerScreen() {
         onDispose {
             keyboard.allNotesOff()
             input.close()
+            looper.close()
             NativeEngine.stop()
         }
     }
@@ -287,7 +293,28 @@ private fun PerformerScreen() {
         }
     }
     val selectedFont = fonts.firstOrNull { it.id == selectedFontId }
-    val selectedPreset = presets.getOrNull(presetIndex)
+    val selectedTrack = loopState.tracks.firstOrNull { it.id == loopState.selectedId }
+    val selectedPreset = presets.firstOrNull {
+        it.bank == selectedTrack?.bank && it.program == selectedTrack.program
+    } ?: presets.getOrNull(presetIndex)
+    var pendingTrackRemoval by remember { mutableStateOf<Int?>(null) }
+
+    pendingTrackRemoval?.let { trackId ->
+        AlertDialog(
+            onDismissRequest = { pendingTrackRemoval = null },
+            title = { Text("刪除樂器軌？") },
+            text = { Text("將刪除此軌已錄製的 MIDI 音符。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    looper.removeTrack(trackId)
+                    pendingTrackRemoval = null
+                }) { Text("刪除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingTrackRemoval = null }) { Text("取消") }
+            }
+        )
+    }
 
     deleteCandidate?.let { candidate ->
         AlertDialog(
@@ -328,6 +355,79 @@ private fun PerformerScreen() {
         Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
         Text(midiStatus, style = MaterialTheme.typography.bodySmall)
 
+        Text("Performance · MIDI Loop", style = MaterialTheme.typography.titleLarge)
+        Text("第 ${loopState.bar} / ${loopState.bars} 小節 · 第 ${loopState.beat} 拍" +
+            when {
+                loopState.recording -> " · 錄製中"
+                loopState.armed -> " · 下一循環開始錄製"
+                loopState.playing -> " · 播放中"
+                else -> " · 已暫停"
+            }, style = MaterialTheme.typography.bodyMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { looper.playPause() }) {
+                Text(if (loopState.playing) "暫停播放" else "播放")
+            }
+            Button(onClick = { looper.recordPause() }) {
+                Text(if (loopState.recording || loopState.armed) "停止錄製" else "錄製")
+            }
+            OutlinedButton(onClick = { looper.clearSelected() }) { Text("清除此軌") }
+        }
+        Text("速度 ${loopState.bpm} BPM")
+        Slider(
+            value = loopState.bpm.toFloat(),
+            onValueChange = { looper.setBpm(it.toInt()) },
+            valueRange = 40f..240f
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("循環小節數", modifier = Modifier.padding(top = 12.dp))
+            listOf(1, 2, 4, 8).forEach { bars ->
+                FilterChip(
+                    selected = loopState.bars == bars, onClick = { looper.setBars(bars) },
+                    label = { Text("$bars") }
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("節拍器", modifier = Modifier.padding(top = 12.dp))
+            Switch(
+                checked = loopState.metronome,
+                onCheckedChange = looper::setMetronome
+            )
+        }
+        Text("樂器軌", style = MaterialTheme.typography.titleMedium)
+        loopState.tracks.forEach { track ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(
+                    selected = track.id == loopState.selectedId,
+                    onClick = { looper.selectTrack(track.id) },
+                    label = {
+                        Text("${track.name} · ${track.notes} 音", maxLines = 1)
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { looper.muteTrack(track.id) }) {
+                    Text(if (track.muted) "取消靜音" else "靜音")
+                }
+                TextButton(
+                    enabled = loopState.tracks.size > 1,
+                    onClick = { pendingTrackRemoval = track.id }
+                ) { Text("刪除") }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                if (!looper.addTrack()) message = "最多 15 條旋律樂器軌"
+            }) { Text("＋ 樂器軌") }
+            OutlinedButton(onClick = {
+                if (!looper.addTrack(drums = true)) message = "目前已有鼓組軌，請先刪除舊鼓組"
+            }) { Text("＋ 鼓組軌") }
+        }
+        Text("選取樂器軌後即可彈奏及錄製；播放中按錄製會等到下一輪起點，" +
+            "錄滿一輪自動開始循環。預設鼓組的 1 小節節奏會在 2 小節內重複播放。" +
+            "設定與錄好的 MIDI 音符會自動保存。",
+            style = MaterialTheme.typography.bodySmall)
+        HorizontalDivider()
+
         Text("音色庫（SoundFont）", style = MaterialTheme.typography.titleMedium)
         ExposedDropdownMenuBox(expanded = showFonts, onExpandedChange = { showFonts = it && !loading }) {
             OutlinedTextField(
@@ -358,9 +458,11 @@ private fun PerformerScreen() {
                     Text("刪除音色")
                 }
         }
-        ExposedDropdownMenuBox(expanded = showPresets, onExpandedChange = { showPresets = it && !loading }) {
+        ExposedDropdownMenuBox(expanded = showPresets,
+            onExpandedChange = { showPresets = it && !loading && selectedTrack?.channel != 9 }) {
             OutlinedTextField(
-                value = selectedPreset?.displayName ?: "找不到可用樂器預設",
+                value = if (selectedTrack?.channel == 9) "鼓組（GM MIDI Ch 10）"
+                    else selectedPreset?.displayName ?: "找不到可用樂器預設",
                 onValueChange = {}, readOnly = true, singleLine = true,
                 label = { Text("目前音色庫的樂器／Preset") },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(showPresets) },
@@ -372,7 +474,7 @@ private fun PerformerScreen() {
                         text = { Text(preset.displayName) },
                         onClick = {
                             presetIndex = index
-                            NativeEngine.selectPreset(preset.bank, preset.program)
+                            looper.setPreset(preset.bank, preset.program)
                             settings.edit()
                                 .putInt("presetBank:" + selectedFontId, preset.bank)
                                 .putInt("presetProgram:" + selectedFontId, preset.program)
