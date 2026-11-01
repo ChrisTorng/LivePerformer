@@ -61,7 +61,7 @@ looper=(root/'app/src/main/java/tw/idv/christorng/liveperformer/LoopController.k
 math=(root/'app/src/main/java/tw/idv/christorng/liveperformer/LoopMath.kt').read_text()
 keyboard=(root/'app/src/main/java/tw/idv/christorng/liveperformer/PianoKeyboardView.kt').read_text()
 midi=(root/'app/src/main/java/tw/idv/christorng/liveperformer/MidiInput.kt').read_text()
-for required in ('LoopController(context)', 'looper::onMidi', 'looper.recordPause()', 'looper.playPause()', 'looper.addTrack()', 'looper.clearSelected()', 'looper.setMetronome', 'looper.setBpm'):
+for required in ('LoopController(context)', 'looper::onMidi', 'looper.recordPause()', 'looper.playPause()', 'looper.addTrack()', 'looper.clearSelected()', 'looper::setMetronome', 'looper.setBpm'):
     assert required in activity, required
 for required in ('ScheduledThreadPoolExecutor', 'nextOccurrence', 'recordStart', 'SharedPreferences', 'loop-session'):
     if required == 'SharedPreferences': continue
