@@ -93,6 +93,10 @@ object PulseLatencyTester {
                     fired = true
                 }
             }
+            val routedInput = input.routedDevice
+            val routedInputText = routedInput?.let {
+                "輸入路徑 ${it.productName}（ID ${it.id}，類型 ${it.type}）"
+            } ?: "輸入路徑：系統未回報"
             val time = AudioTimestamp()
             val timeOk = input.getTimestamp(time, AudioTimestamp.TIMEBASE_MONOTONIC) == AudioRecord.SUCCESS
             val emittedNs = NativeEngine.lastPulseNs()
@@ -139,6 +143,7 @@ object PulseLatencyTester {
             return "輸出 callback → 麥克風捕捉：" +
                 String.format(Locale.US, "%.1f", diffMs) + " ms\n相關性 " + confidence +
                 " · 錄音來源 " + sourceName +
+                "\n" + routedInputText +
                 "\n包含輸出與收音路徑，不包含實體 MIDI 按鍵，也不是完整 Round Trip。"
         } catch (ex: SecurityException) {
             return "沒有麥克風權限：" + ex.message
