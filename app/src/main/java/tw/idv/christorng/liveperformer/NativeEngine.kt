@@ -26,5 +26,6 @@ object NativeEngine {
     fun noteOn(note: Int, velocity: Int = 100, channel: Int = 0) = midi(NOTE_ON, channel, note, velocity)
     fun noteOff(note: Int, channel: Int = 0) = midi(NOTE_OFF, channel, note, 0)
     fun program(number: Int) = midi(PROGRAM, 0, number, 0)
-    fun selectPreset(bank: Int, program: Int) = midi(PRESET_SELECT, 0, program, bank)
+    fun selectPreset(bank: Int, program: Int, channel: Int = 0) =
+        midi(PRESET_SELECT, channel, program, bank)
 }
