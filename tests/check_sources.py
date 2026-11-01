@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.1.3' in workflow and 'versionCode = 4' in gradle
+assert 'v0.1.4' in workflow and 'versionCode = 5' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -45,3 +45,13 @@ assert 'PulseLatencyTester.summarize' in activity
 assert 'NativeEngine.xrunCount()' in activity
 assert 'testDebugUnitTest' in workflow
 print('PASS: SoundFont registry, real SF2 presets, dark theme and measured xRun deltas')
+
+# Audio route hotplug and state persistence regressions.
+assert 'registerAudioDeviceCallback' in activity and 'AudioDeviceInfo' in activity
+assert 'NativeEngine.restart' in activity and 'consumeReconnectRequest' in native
+assert 'onErrorAfterClose' in native and 'builder.setDeviceId(deviceId)' in native
+assert 'fluid_synth_set_gain' in native and 'NativeEngine.setGain' in activity
+assert 'presetBank:' in activity and 'presetProgram:' in activity
+assert 'putFloat("velocity"' in activity and 'putFloat("gain"' in activity
+assert 'putInt("baseNote"' in activity
+print('PASS: AAudio device recovery, selected preset, velocity, octave and gain persistence')

@@ -1,6 +1,11 @@
 package tw.idv.christorng.liveperformer
 
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
@@ -73,12 +78,27 @@ private fun loadBundledFont(context: Context): File {
     return dst
 }
 
+private fun audioOutputName(device: AudioDeviceInfo): String {
+    val type = when (device.type) {
+        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "手機喇叭"
+        AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "3.5mm 耳機"
+        AudioDeviceInfo.TYPE_WIRED_HEADSET -> "3.5mm 耳麥"
+        AudioDeviceInfo.TYPE_USB_DEVICE -> "USB 音訊介面"
+        AudioDeviceInfo.TYPE_USB_HEADSET -> "USB 耳機"
+        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "藍牙音訊"
+        else -> "輸出裝置"
+    }
+    return "$type · ${device.productName}（ID ${device.id}）"
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PerformerScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val library = remember(context) { SoundFontLibrary(context) }
+    val settings = remember(context) { context.getSharedPreferences("performer", Context.MODE_PRIVATE) }
+    val audioManager = remember(context) { context.getSystemService(AudioManager::class.java) }
     val keyboard = remember { PianoKeyboardView(context) }
     val fonts = remember { mutableStateListOf<SoundFontItem>() }
     val presets = remember { mutableStateListOf<InstrumentPreset>() }
@@ -91,8 +111,14 @@ private fun PerformerScreen() {
     var message by remember { mutableStateOf("啟動音訊中…") }
     var audioStatus by remember { mutableStateOf("Audio: starting…") }
     var midiStatus by remember { mutableStateOf("USB MIDI: scanning…") }
-    var baseNote by remember { mutableIntStateOf(48) }
-    var velocity by remember { mutableFloatStateOf(100f) }
+    var baseNote by remember { mutableIntStateOf(settings.getInt("baseNote", 48).coerceIn(0, 96)) }
+    var velocity by remember { mutableFloatStateOf(settings.getFloat("velocity", 100f).coerceIn(1f, 127f)) }
+    var gain by remember { mutableFloatStateOf(settings.getFloat("gain", 0.8f).coerceIn(0.1f, 1.5f)) }
+    var routeRevision by remember { mutableIntStateOf(0) }
+    var requestedOutputId by remember { mutableIntStateOf(0) } // Device IDs are ephemeral: do not persist.
+    var outputs by remember { mutableStateOf(emptyList<AudioDeviceInfo>()) }
+    var showOutputs by remember { mutableStateOf(false) }
+    var restarting by remember { mutableStateOf(false) }
     var measuring by remember { mutableStateOf(false) }
     var testCount by remember { mutableIntStateOf(3) }
     var measurement by remember { mutableStateOf("尚未量測。需以喇叭或有線 Loopback 讓麥克風收到測試訊號。") }
@@ -118,7 +144,10 @@ private fun PerformerScreen() {
                 presets.addAll(result.second.presets)
                 if (presets.isEmpty() && item.isBundled)
                     presets.addAll(GmPrograms.names.mapIndexed { i, n -> InstrumentPreset(0, i, n) })
-                presetIndex = 0
+                val savedBank = settings.getInt("presetBank:" + item.id, 0)
+                val savedProgram = settings.getInt("presetProgram:" + item.id, 0)
+                presetIndex = presets.indexOfFirst { it.bank == savedBank && it.program == savedProgram }
+                    .takeIf { it >= 0 } ?: 0
                 if (presets.isNotEmpty()) {
                     val p = presets.first()
                     NativeEngine.selectPreset(p.bank, p.program)
@@ -130,6 +159,37 @@ private fun PerformerScreen() {
             message = "切換音色庫失敗：${ex.message}"
         } finally {
             loading = false
+        }
+    }
+
+    fun scanAudioOutputs() {
+        outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            .filter { it.isSink }.sortedBy { it.id }
+        if (requestedOutputId != 0 && outputs.none { it.id == requestedOutputId }) {
+            requestedOutputId = 0
+        }
+    }
+
+    // Audio route hotplug and AAudio stream disconnect are handled outside the audio callback.
+    suspend fun reconnectAudio() {
+        if (restarting) return
+        restarting = true
+        try {
+            while (loading || measuring) delay(100)
+            keyboard.allNotesOff()
+            val font = fonts.firstOrNull { it.id == selectedFontId }
+            val ready = withContext(Dispatchers.IO) { NativeEngine.restart(requestedOutputId) }
+            if (!ready) {
+                message = "音訊重新連線失敗，請選擇自動輸出或重新連接。"
+                return
+            }
+            NativeEngine.setGain(gain)
+            if (font != null) activate(font)
+            else message = "音訊已重新連線；尚未找到音色庫。"
+        } catch (ex: Exception) {
+            message = "音訊重新連線失敗：${ex.message}"
+        } finally {
+            restarting = false
         }
     }
 
@@ -173,8 +233,28 @@ private fun PerformerScreen() {
         }
     }
 
+    DisposableEffect(audioManager) {
+        scanAudioOutputs()
+        val deviceCallback = object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
+                if (addedDevices.any { it.isSink }) {
+                    scanAudioOutputs()
+                    routeRevision++
+                }
+            }
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+                if (removedDevices.any { it.isSink }) {
+                    scanAudioOutputs()
+                    routeRevision++
+                }
+            }
+        }
+        audioManager.registerAudioDeviceCallback(deviceCallback, Handler(Looper.getMainLooper()))
+        onDispose { audioManager.unregisterAudioDeviceCallback(deviceCallback) }
+    }
     DisposableEffect(Unit) {
         val ready = NativeEngine.start()
+        NativeEngine.setGain(gain)
         val input = MidiInput(context) { midiStatus = it }
         if (ready) scope.launch {
             try {
@@ -196,7 +276,14 @@ private fun PerformerScreen() {
         while (isActive) {
             delay(500)
             audioStatus = NativeEngine.status()
+            if (NativeEngine.consumeReconnectRequest() && !restarting) routeRevision++
             withContext(Dispatchers.IO) { NativeEngine.collectRetired() }
+        }
+    }
+    LaunchedEffect(routeRevision) {
+        if (routeRevision > 0) {
+            delay(500) // Collapse short USB / 3.5mm connect/disconnect bursts.
+            reconnectAudio()
         }
     }
     val selectedFont = fonts.firstOrNull { it.id == selectedFontId }
@@ -286,6 +373,10 @@ private fun PerformerScreen() {
                         onClick = {
                             presetIndex = index
                             NativeEngine.selectPreset(preset.bank, preset.program)
+                            settings.edit()
+                                .putInt("presetBank:" + selectedFontId, preset.bank)
+                                .putInt("presetProgram:" + selectedFontId, preset.program)
+                                .apply()
                             showPresets = false
                         }
                     )
@@ -293,21 +384,68 @@ private fun PerformerScreen() {
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { baseNote = (baseNote - 12).coerceAtLeast(0) }) { Text("− 八度") }
-            OutlinedButton(onClick = { baseNote = (baseNote + 12).coerceAtMost(96) }) { Text("+ 八度") }
+            OutlinedButton(onClick = {
+                baseNote = (baseNote - 12).coerceAtLeast(0)
+                settings.edit().putInt("baseNote", baseNote).apply()
+            }) { Text("− 八度") }
+            OutlinedButton(onClick = {
+                baseNote = (baseNote + 12).coerceAtMost(96)
+                settings.edit().putInt("baseNote", baseNote).apply()
+            }) { Text("+ 八度") }
             Text("C${baseNote / 12 - 1}", modifier = Modifier.padding(top = 13.dp))
         }
         Text("觸控 Velocity：${velocity.toInt()}")
-        Slider(value = velocity, onValueChange = { velocity = it }, valueRange = 1f..127f)
+        Slider(value = velocity, onValueChange = {
+            velocity = it
+            settings.edit().putFloat("velocity", it).apply()
+        }, valueRange = 1f..127f)
+        Text("合成器主音量：${"%.2f".format(gain)}（獨立於觸控力度）")
+        Slider(value = gain, onValueChange = {
+            gain = it
+            NativeEngine.setGain(it)
+            settings.edit().putFloat("gain", it).apply()
+        }, valueRange = 0.1f..1.5f)
+        Text("大音量搭配和弦可能產生削波；若失真請降低主音量。", style = MaterialTheme.typography.bodySmall)
         AndroidView(
             factory = { keyboard },
             update = { view -> view.baseNote = baseNote; view.velocity = velocity.toInt() },
             modifier = Modifier.fillMaxWidth().height(220.dp)
         )
 
+        Text("音訊輸出", style = MaterialTheme.typography.titleMedium)
+        ExposedDropdownMenuBox(expanded = showOutputs, onExpandedChange = { showOutputs = it && !restarting }) {
+            OutlinedTextField(
+                value = if (requestedOutputId == 0) "自動跟隨系統" else
+                    outputs.firstOrNull { it.id == requestedOutputId }?.let(::audioOutputName) ?: "自動跟隨系統",
+                onValueChange = {}, readOnly = true, singleLine = true,
+                label = { Text("輸出裝置") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(showOutputs) },
+                modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+            )
+            ExposedDropdownMenu(expanded = showOutputs, onDismissRequest = { showOutputs = false }) {
+                DropdownMenuItem(text = { Text("自動跟隨系統") }, onClick = {
+                    showOutputs = false
+                    requestedOutputId = 0
+                    routeRevision++
+                })
+                outputs.forEach { output ->
+                    DropdownMenuItem(text = { Text(audioOutputName(output)) }, onClick = {
+                        showOutputs = false
+                        requestedOutputId = output.id
+                        routeRevision++
+                    })
+                }
+            }
+        }
+        OutlinedButton(onClick = { scanAudioOutputs(); routeRevision++ }, enabled = !restarting) {
+            Text(if (restarting) "重新連線中…" else "重新連接音訊")
+        }
+        Text("AAudio 輸出切換時會短暫停止並重新載入音色。輸出 ID 可與下方診斷比對。",
+            style = MaterialTheme.typography.bodySmall)
+
         Text("音訊診斷", style = MaterialTheme.typography.titleMedium)
         Text(audioStatus, style = MaterialTheme.typography.bodySmall)
-        Text("MIDI→callback 只代表排程時間，不是實際按鍵至耳機的延遲。", style = MaterialTheme.typography.bodySmall)
+        Text("event→callback 是最後一筆按鍵事件的排程時間（含觸控），並非實際按鍵到耳機延遲。", style = MaterialTheme.typography.bodySmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { NativeEngine.midi(NativeEngine.TEST_PULSE, 0, 0, 0) }) { Text("播放測試音") }
             OutlinedButton(onClick = { NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0) }) {
