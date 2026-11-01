@@ -96,8 +96,10 @@ class LoopController(context: Context) {
         track.events += Event(tick + LoopMath.PPQ / 8, NativeEngine.NOTE_OFF, note, 0)
     }
 
-    @Synchronized private fun restore(): Boolean = runCatching {
-        val json = JSONObject(prefs.getString("data", null) ?: return false)
+    @Synchronized private fun restore(): Boolean {
+        return runCatching {
+        val savedData = prefs.getString("data", null) ?: return@runCatching false
+        val json = JSONObject(savedData)
         bpm = json.optInt("bpm", 120).coerceIn(40, 240)
         bars = json.optInt("bars", 2).coerceIn(1, 8)
         metronome = json.optBoolean("metronome", true)
@@ -123,11 +125,12 @@ class LoopController(context: Context) {
             track.events.sortBy { it.tick }
             tracks += track
         }
-        if (tracks.isEmpty()) return false
+        if (tracks.isEmpty()) return@runCatching false
         if (tracks.none { it.id == selectedId }) selectedId = tracks.first().id
         nextId = maxOf(nextId, (tracks.maxOfOrNull { it.id } ?: 0) + 1)
         true
-    }.getOrDefault(false)
+        }.getOrDefault(false)
+    }
 
     @Synchronized private fun save() {
         if (!dirty) return
