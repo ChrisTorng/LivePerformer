@@ -294,8 +294,8 @@ private fun PerformerScreen() {
     }
     val selectedFont = fonts.firstOrNull { it.id == selectedFontId }
     val selectedTrack = loopState.tracks.firstOrNull { it.id == loopState.selectedId }
-    val selectedPreset = presets.firstOrNull {
-        it.bank == selectedTrack?.bank && it.program == selectedTrack.program
+    val selectedPreset = selectedTrack?.let { track ->
+        presets.firstOrNull { it.bank == track.bank && it.program == track.program }
     } ?: presets.getOrNull(presetIndex)
     var pendingTrackRemoval by remember { mutableStateOf<Int?>(null) }
 
@@ -378,8 +378,8 @@ private fun PerformerScreen() {
             onValueChange = { looper.setBpm(it.toInt()) },
             valueRange = 40f..240f
         )
+        Text("循環小節數")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("循環小節數", modifier = Modifier.padding(top = 12.dp))
             listOf(1, 2, 4, 8).forEach { bars ->
                 FilterChip(
                     selected = loopState.bars == bars, onClick = { looper.setBars(bars) },
