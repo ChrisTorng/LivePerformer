@@ -169,7 +169,7 @@ class LoopController(context: Context) {
     private fun changed() {
         dirty = true
         publish()
-        save()
+        // Save is coalesced by the scheduler to avoid a disk write per slider tick.
     }
 
     private fun advance(now: Long) {
