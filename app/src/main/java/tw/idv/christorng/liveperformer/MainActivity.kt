@@ -657,6 +657,10 @@ private fun PerformerScreen() {
                     PackageManager.PERMISSION_GRANTED) runMeasurement()
                 else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
             }) { Text(if (measuring) "量測中…" else "開始多次回錄量測") }
+            val version = remember {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
+            }
+            Text("LivePerformer v$version", style = MaterialTheme.typography.labelSmall)
         }
     } else {
         Column(
