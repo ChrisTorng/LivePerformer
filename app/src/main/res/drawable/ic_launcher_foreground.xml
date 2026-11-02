@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Loop arc -->
+    <path android:pathData="M25,55 C25,35 38,23 57,23 C73,23 86,35 86,51"
+        android:strokeColor="#55DAFF" android:strokeWidth="5"
+        android:strokeLineCap="round" android:fillColor="@android:color/transparent"/>
+    <path android:pathData="M78,46 L86,54 L93,45"
+        android:strokeColor="#55DAFF" android:strokeWidth="5"
+        android:strokeLineJoin="round" android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent"/>
+    <path android:pathData="M83,59 C81,75 69,85 52,85 C37,85 26,77 23,65"
+        android:strokeColor="#B253FF" android:strokeWidth="5"
+        android:strokeLineCap="round" android:fillColor="@android:color/transparent"/>
+    <!-- Live keyboard pulses -->
+    <path android:pathData="M32,53 L32,65" android:strokeColor="#FFBD48"
+        android:strokeWidth="5" android:strokeLineCap="round" />
+    <path android:pathData="M42,46 L42,71" android:strokeColor="#FF8A48"
+        android:strokeWidth="5" android:strokeLineCap="round" />
+    <path android:pathData="M52,54 L52,66" android:strokeColor="#E35CFC"
+        android:strokeWidth="5" android:strokeLineCap="round" />
+    <!-- Musical note -->
+    <path android:pathData="M68,37 L68,65 M68,37 L81,33 L81,60"
+        android:strokeColor="#FF64BD" android:strokeWidth="5"
+        android:strokeLineJoin="round" android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent"/>
+    <path android:pathData="M66,65 C59,60 52,65 52,71 C52,78 64,80 68,72 C70,68 69,66 66,65 Z"
+        android:fillColor="#FF64BD"/>
+    <path android:pathData="M79,60 C72,56 67,61 67,67 C67,74 78,76 82,67 C83,65 82,62 79,60 Z"
+        android:fillColor="#FF915E"/>
+</vector>
