@@ -20,6 +20,7 @@ fun SoundFontPicker(
     fonts: List<SoundFontItem>,
     context: Context,
     onChoose: (String, Int, Int) -> Unit,
+    onCategory: (String) -> Unit,
     onClose: () -> Unit
 ) {
     val prefs = remember(context) {
@@ -27,7 +28,8 @@ fun SoundFontPicker(
     }
     var sourceId by remember(track.id) { mutableStateOf(track.fontId) }
     var family by remember(track.id) {
-        mutableIntStateOf(GmCategories.family(track.program))
+        mutableIntStateOf(GmCategories.names.indexOf(track.category)
+            .takeIf { it >= 0 } ?: GmCategories.family(track.program))
     }
     val source = fonts.firstOrNull { it.id == sourceId }
     val importedPresets by produceState(
@@ -66,11 +68,14 @@ fun SoundFontPicker(
                         )
                     }
                 }
-                if (source?.isBundled == true && track.channel != 9) {
+                if (track.channel != 9) {
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                         GmCategories.names.forEachIndexed { index, name ->
                             FilterChip(selected = family == index,
-                                onClick = { family = index }, label = { Text(name) },
+                                onClick = {
+                                    family = index
+                                    onCategory(name)
+                                }, label = { Text(name) },
                                 modifier = Modifier.padding(end = 5.dp))
                         }
                     }
