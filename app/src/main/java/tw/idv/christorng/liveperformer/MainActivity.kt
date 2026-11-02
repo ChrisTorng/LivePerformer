@@ -856,17 +856,14 @@ private fun PerformerScreen() {
                     settings.edit().putInt("baseNote", baseNote).apply()
                 }) { Text("+") }
             }
-            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                AndroidView(
-                    factory = { keyboard },
-                    update = { view ->
-                        view.baseNote = baseNote
-                        view.velocity = velocity.toInt()
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                        .height((maxHeight * 0.0f) + 172.dp)
-                )
-            }
+            AndroidView(
+                factory = { keyboard },
+                update = { view ->
+                    view.baseNote = baseNote
+                    view.velocity = velocity.toInt()
+                },
+                modifier = Modifier.fillMaxWidth().height(172.dp)
+            )
         }
     }
 
