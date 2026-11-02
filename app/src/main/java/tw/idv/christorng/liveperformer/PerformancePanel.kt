@@ -174,8 +174,7 @@ fun PerformancePanel(
             ) {
                 items(state.tracks, key = { it.id }) { track ->
                     val isSelected = state.selectedId == track.id
-                    val groupName = if (track.channel == 9) "鼓組"
-                        else GmCategories.names[GmCategories.family(track.program)]
+                    val groupName = track.category
                     Row(Modifier.fillMaxWidth().height(if (landscape) 57.dp else 62.dp)) {
                         Box(
                             Modifier.width(labelWidth).fillMaxHeight()
