@@ -358,6 +358,14 @@ private fun PerformerScreen() {
             reconnectAudio()
         }
     }
+    LaunchedEffect(loopState.keyboardNotes, keyboardMode) {
+        if (keyboardMode == KeyboardMode.MONITOR && loopState.keyboardNotes.isNotEmpty()) {
+            val pressed = loopState.keyboardNotes.minOrNull() ?: baseNote
+            if (pressed < baseNote || pressed > baseNote + 24) {
+                baseNote = ((pressed / 12) * 12 - 12).coerceIn(0, 96)
+            }
+        }
+    }
     val selectedTrack = loopState.tracks.firstOrNull { it.id == loopState.selectedId }
     val selectedFont = fonts.firstOrNull { it.id == selectedTrack?.fontId }
     val selectedPreset = selectedTrack?.let { track ->
