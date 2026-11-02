@@ -20,6 +20,7 @@ data class LoopTrackView(
     val muted: Boolean,
     val notes: Int,
     val fontId: String,
+    val category: String,
     val noteRects: List<LoopNoteView>
 )
 data class LoopView(
@@ -48,6 +49,7 @@ class LoopController(context: Context) {
         val id: Int, val channel: Int, var name: String,
         var bank: Int, var program: Int, var muted: Boolean = false,
         var fontId: String = "gm",
+        var category: String = "",
         val events: MutableList<Event> = mutableListOf()
     )
 
@@ -122,6 +124,9 @@ class LoopController(context: Context) {
         }
         tracks.clear()
         tracks.addAll(listOf(drums,bass,strings,lead,piano))
+        listOf("鼓組","貝斯","弦樂","Lead","鋼琴").forEachIndexed { i, name ->
+            tracks[i].category = name
+        }
         tracks.forEach { it.events.sortBy { event -> event.tick } }
         dirty = true
     }
@@ -169,7 +174,10 @@ class LoopController(context: Context) {
             val id = obj.getInt("id")
             val track = Track(id, channel, obj.optString("name", "樂器"),
                 obj.optInt("bank"), obj.optInt("program").coerceIn(0, 127),
-                obj.optBoolean("muted"), obj.optString("fontId", "gm").ifBlank { "gm" })
+                obj.optBoolean("muted"), obj.optString("fontId", "gm").ifBlank { "gm" },
+                obj.optString("category", "").ifBlank {
+                    if (channel == 9) "鼓組" else GmCategories.names[GmCategories.family(obj.optInt("program"))]
+                })
             if (!settingsOnly) {
                 val notes = obj.optJSONArray("events") ?: JSONArray()
                 require(notes.length() <= 100000) { "MIDI 音符數量過多" }
@@ -237,7 +245,7 @@ class LoopController(context: Context) {
         for (t in tracks) {
             val obj = JSONObject().put("id", t.id).put("channel", t.channel)
                 .put("name", t.name).put("bank", t.bank).put("program", t.program)
-                .put("muted", t.muted).put("fontId", t.fontId)
+                .put("muted", t.muted).put("fontId", t.fontId).put("category", t.category)
             if (!settingsOnly) {
                 val events = JSONArray()
                 t.events.forEach { e ->
@@ -293,7 +301,9 @@ class LoopController(context: Context) {
             tracks.map {
                 LoopTrackView(it.id, it.name, it.channel, it.bank, it.program, it.muted,
                     it.events.count { event -> event.type == NativeEngine.NOTE_ON },
-                    it.fontId, pianoNotes(it, length))
+                    it.fontId, it.category.ifBlank {
+                        if (it.channel == 9) "鼓組" else GmCategories.names[GmCategories.family(it.program)]
+                    }, pianoNotes(it, length))
             })
     }
 
@@ -472,6 +482,7 @@ class LoopController(context: Context) {
         tracks += Track(id, channel, if (drums) "鼓組 $id" else "樂器 $id",
             if (drums) 128 else 0, 0)
         selectedId = id
+        tracks.last().category = if (drums) "鼓組" else "鋼琴"
         if (!drums) NativeEngine.selectFontPreset(channel, 0, 0, 0)
         changed()
         return true
@@ -496,9 +507,18 @@ class LoopController(context: Context) {
         val track = tracks.firstOrNull { it.id == selectedId } ?: return
         track.bank = bank
         track.program = program
+        if (track.fontId == "gm" && track.channel != 9)
+            track.category = GmCategories.names[GmCategories.family(program)]
         NativeEngine.selectFontPreset(track.channel, fontIndexes[track.fontId] ?: 0, bank, program)
         changed()
     }
+    @Synchronized fun setCategory(category: String) {
+        val t = tracks.firstOrNull { it.id == selectedId } ?: return
+        if (t.channel == 9 || category !in GmCategories.names) return
+        t.category = category
+        changed()
+    }
+
     @Synchronized fun setFont(fontId: String) {
         val t = tracks.firstOrNull { it.id == selectedId } ?: return
         if (!fontIndexes.containsKey(fontId)) return
