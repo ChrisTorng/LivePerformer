@@ -11,6 +11,19 @@ import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import android.os.Build
 import androidx.core.view.WindowCompat
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import android.content.Context
@@ -66,6 +79,67 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private fun trackAccent(channel: Int): Color = when (channel) {
+    9 -> Color(0xFFF87171)
+    1 -> Color(0xFFFBBF24)
+    2 -> Color(0xFF4ADE80)
+    3 -> Color(0xFF60A5FA)
+    else -> Color(0xFFC084FC)
+}
+
+@Composable
+private fun LoopTimeline(loop: LoopView, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Row(modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("1", style = MaterialTheme.typography.labelSmall)
+            Text("${loop.bar}.${loop.beat}", style = MaterialTheme.typography.labelSmall)
+            Text("${loop.bars}", style = MaterialTheme.typography.labelSmall)
+        }
+        Canvas(modifier = Modifier.fillMaxWidth().height(28.dp)) {
+            val corner = androidx.compose.ui.geometry.CornerRadius(9.dp.toPx())
+            drawRoundRect(Color(0xFF1F2937), cornerRadius = corner)
+            drawRoundRect(
+                if (loop.recording) Color(0xFFEF4444) else Color(0xFF3B82F6),
+                size = androidx.compose.ui.geometry.Size(size.width * loop.progress, size.height),
+                cornerRadius = corner, alpha = .58f
+            )
+            for (step in 1 until loop.bars * 4) {
+                val x = size.width * step / (loop.bars * 4)
+                drawLine(
+                    if (step % 4 == 0) Color.White.copy(alpha = .75f)
+                    else Color.White.copy(alpha = .27f),
+                    Offset(x, 1.dp.toPx()), Offset(x, size.height - 1.dp.toPx()),
+                    strokeWidth = if (step % 4 == 0) 2.dp.toPx() else 1.dp.toPx()
+                )
+            }
+            val x = (size.width * loop.progress).coerceIn(0f, size.width)
+            drawLine(Color(0xFFECFEFF), Offset(x, 0f), Offset(x, size.height),
+                strokeWidth = 3.dp.toPx())
+        }
+    }
+}
+
+@Composable
+private fun TrackPattern(track: LoopTrackView, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val color = trackAccent(track.channel)
+        drawRoundRect(color.copy(alpha = .13f),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(5.dp.toPx()))
+        drawLine(Color.White.copy(alpha = .22f),
+            Offset(size.width / 2, 0f), Offset(size.width / 2, size.height),
+            strokeWidth = 1.dp.toPx())
+        for (hit in track.hits) {
+            val x = (hit * size.width).coerceIn(0f, size.width - 2.dp.toPx())
+            val w = (size.width / 30).coerceAtLeast(2.dp.toPx())
+            drawRoundRect(if (track.muted) Color.Gray else color,
+                topLeft = Offset(x, size.height * .22f), 
+                size = androidx.compose.ui.geometry.Size(w, size.height * .56f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(1.dp.toPx()))
+        }
+    }
+}
+
 private fun loadBundledFont(context: Context): File {
     val dst = File(context.filesDir, "GeneralUser-GS.sf2")
     if (!dst.exists() || dst.length() < 10_000_000) {
@@ -110,6 +184,11 @@ private fun PerformerScreen() {
     var presetIndex by remember { mutableIntStateOf(0) }
     var showFonts by remember { mutableStateOf(false) }
     var showPresets by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    var showInstrumentPicker by remember { mutableStateOf(false) }
+    var showBarsMenu by remember { mutableStateOf(false) }
+    var showDemoConfirmation by remember { mutableStateOf(false) }
+    var openTrackMenu by remember { mutableStateOf<Int?>(null) }
     var deleteCandidate by remember { mutableStateOf<SoundFontItem?>(null) }
     var loading by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("啟動音訊中…") }
@@ -340,234 +419,457 @@ private fun PerformerScreen() {
         )
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .verticalScroll(rememberScrollState())
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Text("LivePerformer", style = MaterialTheme.typography.headlineMedium)
-        val version = remember {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
-        }
-        Text("低延遲鋼琴 · Android v$version", style = MaterialTheme.typography.labelMedium)
-        Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
-        Text(midiStatus, style = MaterialTheme.typography.bodySmall)
 
-        Text("Performance · MIDI Loop", style = MaterialTheme.typography.titleLarge)
-        Text("第 ${loopState.bar} / ${loopState.bars} 小節 · 第 ${loopState.beat} 拍" +
-            when {
-                loopState.recording -> " · 錄製中"
-                loopState.armed -> " · 下一循環開始錄製"
-                loopState.playing -> " · 播放中"
-                else -> " · 已暫停"
-            }, style = MaterialTheme.typography.bodyMedium)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { looper.playPause() }) {
-                Text(if (loopState.playing) "暫停播放" else "播放")
-            }
-            Button(onClick = { looper.recordPause() }) {
-                Text(if (loopState.recording || loopState.armed) "停止錄製" else "錄製")
-            }
-            OutlinedButton(onClick = { looper.clearSelected() }) { Text("清除此軌") }
-        }
-        Text("速度 ${loopState.bpm} BPM")
-        Slider(
-            value = loopState.bpm.toFloat(),
-            onValueChange = { looper.setBpm(it.toInt()) },
-            valueRange = 40f..240f
+    if (showDemoConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDemoConfirmation = false },
+            title = { Text("載入兩小節示範？") },
+            text = { Text("會取代目前所有樂器軌及錄音。") },
+            confirmButton = { TextButton(onClick = {
+                looper.loadDemo()
+                showDemoConfirmation = false
+            }) { Text("載入") } },
+            dismissButton = { TextButton(onClick = {
+                showDemoConfirmation = false
+            }) { Text("取消") } }
         )
-        Text("循環小節數")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(1, 2, 4, 8).forEach { bars ->
-                FilterChip(
-                    selected = loopState.bars == bars, onClick = { looper.setBars(bars) },
-                    label = { Text("$bars") }
-                )
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("節拍器", modifier = Modifier.padding(top = 12.dp))
-            Switch(
-                checked = loopState.metronome,
-                onCheckedChange = looper::setMetronome
-            )
-        }
-        Text("樂器軌", style = MaterialTheme.typography.titleMedium)
-        loopState.tracks.forEach { track ->
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FilterChip(
-                    selected = track.id == loopState.selectedId,
-                    onClick = { looper.selectTrack(track.id) },
-                    label = {
-                        Text("${track.name} · ${track.notes} 音", maxLines = 1)
-                    },
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(onClick = { looper.muteTrack(track.id) }) {
-                    Text(if (track.muted) "取消靜音" else "靜音")
-                }
-                TextButton(
-                    enabled = loopState.tracks.size > 1,
-                    onClick = { pendingTrackRemoval = track.id }
-                ) { Text("刪除") }
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = {
-                if (!looper.addTrack()) message = "最多 15 條旋律樂器軌"
-            }) { Text("＋ 樂器軌") }
-            OutlinedButton(onClick = {
-                if (!looper.addTrack(drums = true)) message = "目前已有鼓組軌，請先刪除舊鼓組"
-            }) { Text("＋ 鼓組軌") }
-        }
-        Text("選取樂器軌後即可彈奏及錄製；播放中按錄製會等到下一輪起點，" +
-            "錄滿一輪自動開始循環。預設鼓組的 1 小節節奏會在 2 小節內重複播放。" +
-            "設定與錄好的 MIDI 音符會自動保存。",
-            style = MaterialTheme.typography.bodySmall)
-        HorizontalDivider()
+    }
 
-        Text("音色庫（SoundFont）", style = MaterialTheme.typography.titleMedium)
-        ExposedDropdownMenuBox(expanded = showFonts, onExpandedChange = { showFonts = it && !loading }) {
-            OutlinedTextField(
-                value = selectedFont?.let { "${it.title} · ${it.sizeMiB} MiB" } ?: "尚未載入",
-                onValueChange = {}, readOnly = true, singleLine = true,
-                label = { Text("目前音色庫") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(showFonts) },
-                modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+    if (showInstrumentPicker) {
+        val track = loopState.tracks.firstOrNull { it.id == loopState.selectedId }
+        if (track == null || track.channel == 9) {
+            LaunchedEffect(track?.id) { showInstrumentPicker = false }
+        } else {
+            var family by remember(track.id) {
+                mutableIntStateOf(GmCategories.family(track.program))
+            }
+            val familyPresets = presets.filter { GmCategories.family(it.program) == family }
+            val familyDefault = settings.getInt(
+                "lastGMFamily:$family", GmCategories.defaults[family]
             )
-            ExposedDropdownMenu(expanded = showFonts, onDismissRequest = { showFonts = false }) {
-                fonts.forEach { font ->
-                    DropdownMenuItem(
-                        text = { Text("${font.title} · ${font.sizeMiB} MiB") },
-                        onClick = {
-                            showFonts = false
-                            if (font.id != selectedFontId) scope.launch { activate(font) }
+            val recommended = familyPresets.firstOrNull {
+                it.bank == 0 && it.program == familyDefault
+            } ?: familyPresets.firstOrNull()
+            AlertDialog(
+                onDismissRequest = { showInstrumentPicker = false },
+                title = { Text("選擇樂器", style = MaterialTheme.typography.titleLarge) },
+                text = {
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            GmCategories.names.forEachIndexed { index, name ->
+                                FilterChip(selected = family == index, onClick = { family = index },
+                                    label = { Text(name, maxLines = 1) })
+                            }
                         }
-                    )
+                        if (recommended != null) {
+                            TextButton(onClick = {
+                                looper.setPreset(recommended.bank, recommended.program)
+                                settings.edit().putInt("lastGMFamily:$family", recommended.program).apply()
+                                showInstrumentPicker = false
+                            }) { Text("★ 上次使用／預設：${recommended.displayName}", maxLines = 2) }
+                        }
+                        LazyColumn(modifier = Modifier.heightIn(max = 310.dp)) {
+                            items(familyPresets) { preset ->
+                                TextButton(
+                                    onClick = {
+                                        looper.setPreset(preset.bank, preset.program)
+                                        settings.edit().putInt(
+                                            "lastGMFamily:$family", preset.program
+                                        ).apply()
+                                        showInstrumentPicker = false
+                                    }, modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(preset.displayName, modifier = Modifier.fillMaxWidth(),
+                                        maxLines = 2)
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showInstrumentPicker = false }) { Text("關閉") }
                 }
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(enabled = !loading, onClick = { picker.launch(arrayOf("*/*")) }) {
-                Text("匯入 SF2 / ZIP / XZ")
-            }
-            if (selectedFont != null && !selectedFont.isBundled)
-                OutlinedButton(enabled = !loading, onClick = { deleteCandidate = selectedFont }) {
-                    Text("刪除音色")
-                }
-        }
-        ExposedDropdownMenuBox(expanded = showPresets,
-            onExpandedChange = { showPresets = it && !loading && selectedTrack?.channel != 9 }) {
-            OutlinedTextField(
-                value = if (selectedTrack?.channel == 9) "鼓組（GM MIDI Ch 10）"
-                    else selectedPreset?.displayName ?: "找不到可用樂器預設",
-                onValueChange = {}, readOnly = true, singleLine = true,
-                label = { Text("目前音色庫的樂器／Preset") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(showPresets) },
-                modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
             )
-            ExposedDropdownMenu(expanded = showPresets, onDismissRequest = { showPresets = false }) {
-                presets.forEachIndexed { index, preset ->
-                    DropdownMenuItem(
-                        text = { Text(preset.displayName) },
-                        onClick = {
-                            presetIndex = index
-                            looper.setPreset(preset.bank, preset.program)
-                            settings.edit()
-                                .putInt("presetBank:" + selectedFontId, preset.bank)
-                                .putInt("presetProgram:" + selectedFontId, preset.program)
-                                .apply()
-                            showPresets = false
-                        }
-                    )
-                }
-            }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = {
-                baseNote = (baseNote - 12).coerceAtLeast(0)
-                settings.edit().putInt("baseNote", baseNote).apply()
-            }) { Text("− 八度") }
-            OutlinedButton(onClick = {
-                baseNote = (baseNote + 12).coerceAtMost(96)
-                settings.edit().putInt("baseNote", baseNote).apply()
-            }) { Text("+ 八度") }
-            Text("C${baseNote / 12 - 1}", modifier = Modifier.padding(top = 13.dp))
-        }
-        Text("觸控 Velocity：${velocity.toInt()}")
-        Slider(value = velocity, onValueChange = {
-            velocity = it
-            settings.edit().putFloat("velocity", it).apply()
-        }, valueRange = 1f..127f)
-        Text("合成器主音量：${"%.2f".format(gain)}（獨立於觸控力度）")
-        Slider(value = gain, onValueChange = {
-            gain = it
-            NativeEngine.setGain(it)
-            settings.edit().putFloat("gain", it).apply()
-        }, valueRange = 0.1f..1.5f)
-        Text("大音量搭配和弦可能產生削波；若失真請降低主音量。", style = MaterialTheme.typography.bodySmall)
-        AndroidView(
-            factory = { keyboard },
-            update = { view -> view.baseNote = baseNote; view.velocity = velocity.toInt() },
-            modifier = Modifier.fillMaxWidth().height(220.dp)
-        )
+    }
 
-        Text("音訊輸出", style = MaterialTheme.typography.titleMedium)
-        ExposedDropdownMenuBox(expanded = showOutputs, onExpandedChange = { showOutputs = it && !restarting }) {
-            OutlinedTextField(
-                value = if (requestedOutputId == 0) "自動跟隨系統" else
-                    outputs.firstOrNull { it.id == requestedOutputId }?.let(::audioOutputName) ?: "自動跟隨系統",
-                onValueChange = {}, readOnly = true, singleLine = true,
-                label = { Text("輸出裝置") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(showOutputs) },
-                modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-            )
-            ExposedDropdownMenu(expanded = showOutputs, onDismissRequest = { showOutputs = false }) {
-                DropdownMenuItem(text = { Text("自動跟隨系統") }, onClick = {
-                    showOutputs = false
-                    requestedOutputId = 0
-                    routeRevision++
-                })
-                outputs.forEach { output ->
-                    DropdownMenuItem(text = { Text(audioOutputName(output)) }, onClick = {
+    if (showSettings) {
+        Column(
+            modifier = Modifier.fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .verticalScroll(rememberScrollState())
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { showSettings = false }) { Text("‹ 演奏") }
+                Text("設定", style = MaterialTheme.typography.titleLarge)
+            }
+            Text("速度 / 節拍", style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text("${loopState.bpm} BPM")
+                Slider(loopState.bpm.toFloat(), { looper.setBpm(it.toInt()) },
+                    modifier = Modifier.weight(1f), valueRange = 40f..240f)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("循環小節")
+                listOf(1, 2, 4, 8).forEach { bars ->
+                    FilterChip(selected = loopState.bars == bars,
+                        onClick = { looper.setBars(bars) }, label = { Text("$bars") })
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("節拍器")
+                Switch(checked = loopState.metronome, onCheckedChange = looper::setMetronome)
+            }
+            HorizontalDivider()
+            Text("音色庫（SoundFont）", style = MaterialTheme.typography.titleMedium)
+            ExposedDropdownMenuBox(expanded = showFonts, onExpandedChange = { showFonts = it && !loading }) {
+                OutlinedTextField(
+                    value = selectedFont?.let { "${it.title} · ${it.sizeMiB} MiB" } ?: "尚未載入",
+                    onValueChange = {}, readOnly = true, singleLine = true,
+                    label = { Text("目前音色庫") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(showFonts) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                )
+                ExposedDropdownMenu(expanded = showFonts, onDismissRequest = { showFonts = false }) {
+                    fonts.forEach { font ->
+                        DropdownMenuItem(
+                            text = { Text("${font.title} · ${font.sizeMiB} MiB") },
+                            onClick = {
+                                showFonts = false
+                                if (font.id != selectedFontId) scope.launch { activate(font) }
+                            }
+                        )
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(enabled = !loading, onClick = { picker.launch(arrayOf("*/*")) }) {
+                    Text("匯入 SF2 / ZIP / XZ")
+                }
+                if (selectedFont != null && !selectedFont.isBundled)
+                    OutlinedButton(enabled = !loading, onClick = { deleteCandidate = selectedFont }) {
+                        Text("刪除音色")
+                    }
+            }
+            ExposedDropdownMenuBox(expanded = showPresets,
+                onExpandedChange = { showPresets = it && !loading && selectedTrack?.channel != 9 }) {
+                OutlinedTextField(
+                    value = if (selectedTrack?.channel == 9) "鼓組（GM MIDI Ch 10）"
+                        else selectedPreset?.displayName ?: "找不到可用樂器預設",
+                    onValueChange = {}, readOnly = true, singleLine = true,
+                    label = { Text("目前音色庫的樂器／Preset") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(showPresets) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                )
+                ExposedDropdownMenu(expanded = showPresets, onDismissRequest = { showPresets = false }) {
+                    presets.forEachIndexed { index, preset ->
+                        DropdownMenuItem(
+                            text = { Text(preset.displayName) },
+                            onClick = {
+                                presetIndex = index
+                                looper.setPreset(preset.bank, preset.program)
+                                settings.edit()
+                                    .putInt("presetBank:" + selectedFontId, preset.bank)
+                                    .putInt("presetProgram:" + selectedFontId, preset.program)
+                                    .apply()
+                                showPresets = false
+                            }
+                        )
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    baseNote = (baseNote - 12).coerceAtLeast(0)
+                    settings.edit().putInt("baseNote", baseNote).apply()
+                }) { Text("− 八度") }
+                OutlinedButton(onClick = {
+                    baseNote = (baseNote + 12).coerceAtMost(96)
+                    settings.edit().putInt("baseNote", baseNote).apply()
+                }) { Text("+ 八度") }
+                Text("C${baseNote / 12 - 1}", modifier = Modifier.padding(top = 13.dp))
+            }
+            Text("觸控力度：${velocity.toInt()}")
+            Slider(value = velocity, onValueChange = {
+                velocity = it
+                settings.edit().putFloat("velocity", it).apply()
+            }, valueRange = 1f..127f)
+            Text("音量：${(gain * 100).toInt()}%")
+            Slider(value = gain, onValueChange = {
+                gain = it
+                NativeEngine.setGain(it)
+                settings.edit().putFloat("gain", it).apply()
+            }, valueRange = 0.1f..1.5f)
+            Text("音訊輸出", style = MaterialTheme.typography.titleMedium)
+            ExposedDropdownMenuBox(expanded = showOutputs, onExpandedChange = { showOutputs = it && !restarting }) {
+                OutlinedTextField(
+                    value = if (requestedOutputId == 0) "自動跟隨系統" else
+                        outputs.firstOrNull { it.id == requestedOutputId }?.let(::audioOutputName) ?: "自動跟隨系統",
+                    onValueChange = {}, readOnly = true, singleLine = true,
+                    label = { Text("輸出裝置") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(showOutputs) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                )
+                ExposedDropdownMenu(expanded = showOutputs, onDismissRequest = { showOutputs = false }) {
+                    DropdownMenuItem(text = { Text("自動跟隨系統") }, onClick = {
                         showOutputs = false
-                        requestedOutputId = output.id
+                        requestedOutputId = 0
                         routeRevision++
                     })
+                    outputs.forEach { output ->
+                        DropdownMenuItem(text = { Text(audioOutputName(output)) }, onClick = {
+                            showOutputs = false
+                            requestedOutputId = output.id
+                            routeRevision++
+                        })
+                    }
                 }
             }
-        }
-        OutlinedButton(onClick = { scanAudioOutputs(); routeRevision++ }, enabled = !restarting) {
-            Text(if (restarting) "重新連線中…" else "重新連接音訊")
-        }
-        Text("AAudio 輸出切換時會短暫停止並重新載入音色。輸出 ID 可與下方診斷比對。",
-            style = MaterialTheme.typography.bodySmall)
-
-        Text("音訊診斷", style = MaterialTheme.typography.titleMedium)
-        Text(audioStatus, style = MaterialTheme.typography.bodySmall)
-        Text("event→callback 是最後一筆按鍵事件的排程時間（含觸控），並非實際按鍵到耳機延遲。", style = MaterialTheme.typography.bodySmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { NativeEngine.midi(NativeEngine.TEST_PULSE, 0, 0, 0) }) { Text("播放測試音") }
-            OutlinedButton(onClick = { NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0) }) {
-                Text("全部停止")
+            OutlinedButton(onClick = { scanAudioOutputs(); routeRevision++ }, enabled = !restarting) {
+                Text(if (restarting) "重新連線中…" else "重新連接音訊")
             }
+    
+            Text("音訊診斷", style = MaterialTheme.typography.titleMedium)
+            Text(audioStatus, style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { NativeEngine.midi(NativeEngine.TEST_PULSE, 0, 0, 0) }) { Text("播放測試音") }
+                OutlinedButton(onClick = { NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0) }) {
+                    Text("全部停止")
+                }
+            }
+            Text("麥克風回錄延遲（非 MIDI 按鍵延遲）", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = testCount == 3, onClick = { testCount = 3 },
+                    enabled = !measuring, label = { Text("3 次") })
+                FilterChip(selected = testCount == 5, onClick = { testCount = 5 },
+                    enabled = !measuring, label = { Text("5 次") })
+            }
+            Text(measurement, style = MaterialTheme.typography.bodySmall)
+            Button(enabled = !measuring && !loading, onClick = {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED) runMeasurement()
+                else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+            }) { Text(if (measuring) "量測中…" else "開始多次回錄量測") }
+            val version = remember {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
+            }
+            Text("LivePerformer v$version", style = MaterialTheme.typography.labelSmall)
         }
-        Text("麥克風回錄延遲（非 MIDI 按鍵延遲）", style = MaterialTheme.typography.titleSmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = testCount == 3, onClick = { testCount = 3 },
-                enabled = !measuring, label = { Text("3 次") })
-            FilterChip(selected = testCount == 5, onClick = { testCount = 5 },
-                enabled = !measuring, label = { Text("5 次") })
+    } else {
+        Column(
+            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().height(40.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("LivePerformer", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                if (loading || restarting)
+                    Text("載入中…", style = MaterialTheme.typography.labelSmall)
+                TextButton(onClick = { showSettings = true }) {
+                    Text("⚙ 設定")
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().height(42.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { looper.setBpm(loopState.bpm - 1) }) { Text("−") }
+                    Text("${loopState.bpm}", fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge)
+                    Text(" BPM", style = MaterialTheme.typography.labelSmall)
+                    TextButton(onClick = { looper.setBpm(loopState.bpm + 1) }) { Text("+") }
+                }
+                Box {
+                    TextButton(onClick = { showBarsMenu = true }) {
+                        Text("${loopState.bars} 小節 ⌄")
+                    }
+                    DropdownMenu(expanded = showBarsMenu,
+                        onDismissRequest = { showBarsMenu = false }) {
+                        listOf(1, 2, 4, 8).forEach { count ->
+                            DropdownMenuItem(
+                                text = { Text("$count 小節") },
+                                onClick = {
+                                    looper.setBars(count)
+                                    showBarsMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
+                TextButton(onClick = { looper.setMetronome(!loopState.metronome) }) {
+                    Text(if (loopState.metronome) "♩" else "♩̸")
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("音量", style = MaterialTheme.typography.labelSmall)
+                Slider(value = gain, onValueChange = {
+                    gain = it
+                    NativeEngine.setGain(it)
+                    settings.edit().putFloat("gain", it).apply()
+                }, modifier = Modifier.weight(1f).height(37.dp), valueRange = 0.1f..1.5f)
+            }
+            Text(
+                when {
+                    loopState.recording -> "● 錄製中"
+                    loopState.armed -> "● 等待下一輪錄製"
+                    loopState.playing -> "▶ 播放中"
+                    else -> "Ⅱ 暫停"
+                },
+                color = if (loopState.recording) Color(0xFFF87171)
+                    else MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.labelSmall
+            )
+            LoopTimeline(loopState, modifier = Modifier.fillMaxWidth().height(50.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().height(55.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Button(onClick = { looper.playPause() }) {
+                    Text(if (loopState.playing) "Ⅱ" else "▶", fontSize = 21.sp)
+                }
+                Button(
+                    onClick = { looper.recordPause() },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (loopState.recording || loopState.armed)
+                            Color(0xFFCC333D) else Color(0xFF8E2C38)
+                    )
+                ) {
+                    Text(if (loopState.recording || loopState.armed) "■" else "●",
+                        fontSize = 21.sp)
+                }
+                OutlinedButton(onClick = { looper.clearSelected() }) { Text("清除") }
+                OutlinedButton(onClick = { showDemoConfirmation = true }) { Text("示範") }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().height(36.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("樂器軌", style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    if (!looper.addTrack()) message = "樂器軌已滿"
+                }) { Text("＋ 樂器") }
+                TextButton(onClick = {
+                    if (!looper.addTrack(drums = true)) message = "鼓組軌已存在"
+                }) { Text("＋ 鼓") }
+            }
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                items(loopState.tracks, key = { it.id }) { track ->
+                    val selected = track.id == loopState.selectedId
+                    val instrumentName = if (track.channel == 9) "鼓組"
+                        else GmPrograms.names.getOrNull(track.program) ?: "樂器"
+                    val family = if (track.channel == 9) "鼓"
+                        else GmCategories.names[GmCategories.family(track.program)]
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().height(51.dp)
+                            .clickable { looper.selectTrack(track.id) },
+                        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Box(
+                                Modifier.width(4.dp).height(34.dp)
+                                    .background(trackAccent(track.channel), RoundedCornerShape(3.dp))
+                            )
+                            Column(modifier = Modifier.width(57.dp)) {
+                                Text(track.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                                Text(family, style = MaterialTheme.typography.labelSmall)
+                            }
+                            if (track.channel != 9) {
+                                TextButton(
+                                    modifier = Modifier.width(76.dp),
+                                    onClick = {
+                                        looper.selectTrack(track.id)
+                                        showInstrumentPicker = true
+                                    }, contentPadding = PaddingValues(horizontal = 1.dp)
+                                ) {
+                                    Text(instrumentName, maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.labelSmall)
+                                }
+                            } else {
+                                Text("GM", style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.width(76.dp))
+                            }
+                            TrackPattern(track, Modifier.weight(1f).height(32.dp))
+                            Box {
+                                TextButton(
+                                    onClick = { openTrackMenu = track.id },
+                                    contentPadding = PaddingValues(0.dp),
+                                    modifier = Modifier.width(31.dp)
+                                ) { Text("⋮") }
+                                DropdownMenu(
+                                    expanded = openTrackMenu == track.id,
+                                    onDismissRequest = { openTrackMenu = null }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text(if (track.muted) "取消靜音" else "靜音") },
+                                        onClick = { looper.muteTrack(track.id); openTrackMenu = null }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("刪除樂器軌") },
+                                        enabled = loopState.tracks.size > 1,
+                                        onClick = {
+                                            pendingTrackRemoval = track.id
+                                            openTrackMenu = null
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().height(32.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("鍵盤", style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    baseNote = (baseNote - 12).coerceAtLeast(0)
+                    settings.edit().putInt("baseNote", baseNote).apply()
+                }) { Text("−") }
+                Text("C${baseNote / 12 - 1}", style = MaterialTheme.typography.labelMedium)
+                TextButton(onClick = {
+                    baseNote = (baseNote + 12).coerceAtMost(96)
+                    settings.edit().putInt("baseNote", baseNote).apply()
+                }) { Text("+") }
+            }
+            AndroidView(
+                factory = { keyboard },
+                update = { view ->
+                    view.baseNote = baseNote
+                    view.velocity = velocity.toInt()
+                },
+                modifier = Modifier.fillMaxWidth().height(172.dp)
+            )
         }
-        Text(measurement, style = MaterialTheme.typography.bodySmall)
-        Button(enabled = !measuring && !loading, onClick = {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED) runMeasurement()
-            else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-        }) { Text(if (measuring) "量測中…" else "開始多次回錄量測") }
-        Text("需用喇叭或有線回錄；回錄會改變音訊路徑，測試時的 xRun 不代表正常演奏狀態。",
-            style = MaterialTheme.typography.bodySmall)
     }
+
 }
+

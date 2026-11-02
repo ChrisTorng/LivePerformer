@@ -16,7 +16,8 @@ data class LoopTrackView(
     val bank: Int,
     val program: Int,
     val muted: Boolean,
-    val notes: Int
+    val notes: Int,
+    val hits: List<Float>
 )
 data class LoopView(
     val bpm: Int,
@@ -28,6 +29,7 @@ data class LoopView(
     val selectedId: Int,
     val bar: Int,
     val beat: Int,
+    val progress: Float,
     val tracks: List<LoopTrackView>
 )
 
@@ -76,24 +78,65 @@ class LoopController(context: Context) {
         scheduler.scheduleAtFixedRate({ runCatching { tick() } }, 0, 4, TimeUnit.MILLISECONDS)
     }
 
+    /** Two-bar C major -> A minor groove. The second bar has different drums and bass. */
     private fun installDemo() {
-        tracks += Track(1, 0, "鋼琴", 0, 0)
-        val drums = Track(2, 9, "示範鼓組（1 小節重複）", 128, 0)
-        // One bar of eighth-note hats plus kick / snare, repeated across two bars.
-        for (bar in 0 until 2) {
-            val offset = bar * 4 * LoopMath.PPQ
-            for (step in 0 until 8) addHit(drums, offset + step * LoopMath.PPQ / 2, 42, 62)
-            for (beat in 0 until 4) addHit(drums, offset + beat * LoopMath.PPQ,
-                if (beat % 2 == 0) 36 else 38, 95)
+        bpm = 120
+        bars = 2
+        metronome = true
+        nextId = 6
+        selectedId = 5
+        val drums = Track(1, 9, "鼓組", 128, 0)
+        val bass = Track(2, 1, "Bass", 0, 33)
+        val strings = Track(3, 2, "弦樂", 0, 48)
+        val lead = Track(4, 3, "Lead", 0, 80)
+        val piano = Track(5, 0, "鋼琴", 0, 0)
+        val q = LoopMath.PPQ
+        // Kick/snare variations, closed hats and the turnaround open hat.
+        for (step in 0 until 16) {
+            hit(drums, step * q / 2, if (step == 15) 46 else 42,
+                if (step % 2 == 0) 75 else 52, q / 5)
         }
-        drums.events.sortBy { it.tick }
-        tracks += drums
+        for (beat in intArrayOf(0, 2, 4, 6)) hit(drums, beat * q, 36, 108)
+        for (beat in intArrayOf(1, 3, 5, 7)) hit(drums, beat * q, 38, 105)
+        hit(drums, 7 * q + q / 2, 38, 68, q / 6)
+        hit(drums, 7 * q + 3 * q / 4, 38, 82, q / 6)
+        // Two distinctly phrased bass bars: C2-G2 and A1-E2.
+        listOf(36,36,43,40, 33,33,40,43).forEachIndexed { beat, note ->
+            hit(bass, beat * q, note, 95, q * 3 / 4)
+        }
+        hit(bass, 3 * q + q / 2, 43, 79, q / 3)
+        hit(bass, 7 * q + q / 2, 40, 78, q / 3)
+        // Held C major and A minor chords, slightly overlapping the next beat.
+        for (note in intArrayOf(60,64,67)) hit(strings, 0, note, 65, 4 * q - q / 8)
+        for (note in intArrayOf(57,60,64)) hit(strings, 4 * q, note, 67, 4 * q - q / 8)
+        // Two-bar melody, leaving the keyboard track empty for the performer.
+        listOf(72,74,76,79,81,79,76,74).forEachIndexed { beat, note ->
+            hit(lead, beat * q, note, 82, if (beat == 3 || beat == 7) q * 3 / 4 else q / 2)
+        }
+        tracks.clear()
+        tracks.addAll(listOf(drums,bass,strings,lead,piano))
+        tracks.forEach { it.events.sortBy { event -> event.tick } }
         dirty = true
     }
 
-    private fun addHit(track: Track, tick: Int, note: Int, velocity: Int) {
+    private fun hit(track: Track, tick: Int, note: Int, velocity: Int, duration: Int = LoopMath.PPQ / 8) {
         track.events += Event(tick, NativeEngine.NOTE_ON, note, velocity)
-        track.events += Event(tick + LoopMath.PPQ / 8, NativeEngine.NOTE_OFF, note, 0)
+        track.events += Event((tick + duration).coerceAtMost(LoopMath.loopTicks(2) - 1),
+            NativeEngine.NOTE_OFF, note, 0)
+    }
+
+    @Synchronized fun loadDemo() {
+        playing = false
+        armedTrack = null
+        recordingTrack = null
+        heldRecordingNotes.clear()
+        NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
+        absoluteTick = 0.0
+        lastScheduled = -0.01
+        clockNs = System.nanoTime()
+        installDemo()
+        refreshPrograms()
+        changed()
     }
 
     @Synchronized private fun restore(): Boolean {
@@ -156,9 +199,11 @@ class LoopController(context: Context) {
         val at = ((absoluteTick.toLong() % length + length) % length).toInt()
         return LoopView(bpm, bars, metronome, playing, armedTrack != null,
             recordingTrack != null, selectedId, at / (4 * LoopMath.PPQ) + 1,
-            (at / LoopMath.PPQ) % 4 + 1, tracks.map {
+            (at / LoopMath.PPQ) % 4 + 1, at.toFloat() / length, tracks.map {
                 LoopTrackView(it.id, it.name, it.channel, it.bank, it.program, it.muted,
-                    it.events.count { event -> event.type == NativeEngine.NOTE_ON })
+                    it.events.count { event -> event.type == NativeEngine.NOTE_ON },
+                    it.events.asSequence().filter { event -> event.type == NativeEngine.NOTE_ON }
+                        .map { event -> event.tick.toFloat() / length }.toList())
             })
     }
 
@@ -358,6 +403,13 @@ class LoopController(context: Context) {
     @Synchronized fun refreshPrograms() {
         for (track in tracks) if (track.channel != 9)
             NativeEngine.selectPreset(track.bank, track.program, track.channel)
+    }
+
+    @Synchronized fun renameSelected(name: String) {
+        val track = tracks.firstOrNull { it.id == selectedId } ?: return
+        if (name.isBlank()) return
+        track.name = name.take(24)
+        changed()
     }
 
     @Synchronized fun close() {

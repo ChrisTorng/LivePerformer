@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.2.0' in workflow and 'versionCode = 6' in gradle
+assert 'v0.2.1' in workflow and 'versionCode = 7' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -70,3 +70,17 @@ assert 'const val PPQ = 960' in math and 'fun nextBoundary' in math
 assert 'sendMidi' in keyboard and 'onMidi' in midi
 assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/LoopMathTest.kt').exists()
 print('PASS: multitrack MIDI loop UI, routing, persistence and timeline tests wired')
+
+# The performance screen must never scroll with the keyboard.
+assert 'if (showSettings)' in activity and 'LoopTimeline(' in activity
+assert 'LazyColumn(' in activity and 'TrackPattern(' in activity
+assert 'showInstrumentPicker' in activity and 'GmCategories.names' in activity
+assert 'looper.loadDemo()' in activity
+assert 'android:icon="@mipmap/ic_launcher"' in manifest
+assert (root/'app/src/main/res/drawable/ic_launcher_foreground.xml').exists()
+looper=(root/'app/src/main/java/tw/idv/christorng/liveperformer/LoopController.kt').read_text()
+assert 'val drums = Track(1' in looper and 'val bass = Track(2' in looper
+assert 'val strings = Track(3' in looper and 'val lead = Track(4' in looper
+assert 'val piano = Track(5' in looper
+assert 'nextId = 6' in looper
+print('PASS: compact performance UI, two-bar arrangement, categorised GM and launcher icon')

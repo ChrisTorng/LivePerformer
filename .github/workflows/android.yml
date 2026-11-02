@@ -66,16 +66,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk LivePerformer-v0.2.0-debug.apk
-          zip -9 LivePerformer-v0.2.0-debug.zip LivePerformer-v0.2.0-debug.apk
-          sha256sum LivePerformer-v0.2.0-debug.apk > LivePerformer-v0.2.0-debug.sha256
-          TAG=v0.2.0-dev
+          cp app/build/outputs/apk/debug/app-debug.apk LivePerformer-v0.2.1-debug.apk
+          zip -9 LivePerformer-v0.2.1-debug.zip LivePerformer-v0.2.1-debug.apk
+          sha256sum LivePerformer-v0.2.1-debug.apk > LivePerformer-v0.2.1-debug.sha256
+          TAG=v0.2.1-dev
           if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" LivePerformer-v0.2.0-debug.apk LivePerformer-v0.2.0-debug.zip LivePerformer-v0.2.0-debug.sha256 --clobber
+            gh release upload "$TAG" LivePerformer-v0.2.1-debug.apk LivePerformer-v0.2.1-debug.zip LivePerformer-v0.2.1-debug.sha256 --clobber
           else
-            gh release create "$TAG" LivePerformer-v0.2.0-debug.apk LivePerformer-v0.2.0-debug.zip LivePerformer-v0.2.0-debug.sha256 \
+            gh release create "$TAG" LivePerformer-v0.2.1-debug.apk LivePerformer-v0.2.1-debug.zip LivePerformer-v0.2.1-debug.sha256 \
               --target "$GITHUB_SHA" --prerelease \
-              --title "LivePerformer v0.2.0 Android debug" \
+              --title "LivePerformer v0.2.1 Android debug" \
               --notes "Experimental Android debug build. Hardware audio latency and USB MIDI not yet verified."
           fi
       - name: Upload debug APK
