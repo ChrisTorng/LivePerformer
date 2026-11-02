@@ -328,7 +328,10 @@ private fun PerformerScreen() {
                     } ?: error("無法開啟檔案")
                 }
                 looper.importDocument(content)
-                message = "已載入"
+                val missing = looper.state.value.tracks.map { it.fontId }
+                    .filter { id -> fonts.none { it.id == id } }.distinct()
+                message = if (missing.isEmpty()) "已載入" else
+                    "已載入；缺少音色庫 ${missing.joinToString()}（暫用 GM）"
             } catch (e: Exception) { message = "載入失敗：${e.message}" }
         }
     }
@@ -449,13 +452,11 @@ private fun PerformerScreen() {
                 TextButton(onClick = {
                     deleteCandidate = null
                     scope.launch {
-                        if (selectedFontId == candidate.id) {
-                            val gm = fonts.firstOrNull { it.isBundled }
-                            if (gm != null) activate(gm)
-                        }
                         val ok = withContext(Dispatchers.IO) { library.remove(candidate) }
-                        fonts.clear()
-                        fonts.addAll(withContext(Dispatchers.IO) { library.all() })
+                        if (ok) {
+                            looper.replaceFont(candidate.id)
+                            activate()
+                        }
                         message = if (ok) "已刪除 ${candidate.title}" else "刪除失敗，請重新嘗試"
                     }
                 }) { Text("刪除") }
