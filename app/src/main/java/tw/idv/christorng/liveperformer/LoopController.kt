@@ -506,6 +506,12 @@ class LoopController(context: Context) {
         NativeEngine.selectFontPreset(t.channel, fontIndexes[fontId] ?: 0, t.bank, t.program)
         changed()
     }
+    @Synchronized fun replaceFont(oldId: String, replacementId: String = "gm") {
+        tracks.filter { it.fontId == oldId }.forEach { it.fontId = replacementId }
+        refreshPrograms()
+        changed()
+    }
+
     @Synchronized fun configureFonts(items: List<SoundFontItem>) {
         fontIndexes.clear()
         items.forEachIndexed { index, font -> fontIndexes[font.id] = index }
