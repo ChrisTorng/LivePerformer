@@ -20,6 +20,14 @@ class PianoKeyboardView(context: Context) : View(context) {
             invalidate()
         }
     var velocity = 100
+    /** Monitor-only mode accepts no touches; its pressed keys come from MIDI and loop playback. */
+    var readOnly = false
+    var showExternalNotes: Set<Int> = emptySet()
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
     var sendMidi: (Int, Int, Int, Int) -> Unit = NativeEngine::midi
     private fun noteOn(note: Int, velocity: Int) = sendMidi(NativeEngine.NOTE_ON, 0, note, velocity)
     private fun noteOff(note: Int) = sendMidi(NativeEngine.NOTE_OFF, 0, note, 0)
@@ -60,7 +68,8 @@ class PianoKeyboardView(context: Context) : View(context) {
                 if (isPressed(note)) pressed else black)
         }
     }
-    private fun isPressed(note: Int): Boolean = (0 until active.size()).any { active.valueAt(it) == note }
+    private fun isPressed(note: Int): Boolean =
+        note in showExternalNotes || (0 until active.size()).any { active.valueAt(it) == note }
     private fun noteAt(x: Float, y: Float): Int {
         val step = width / whiteCount.toFloat()
         val index = floor((x / step).toDouble()).toInt().coerceIn(0, whiteCount - 1)
@@ -76,6 +85,7 @@ class PianoKeyboardView(context: Context) : View(context) {
         return baseNote + 12 * (index / 7) + whiteOffsets[index % 7]
     }
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (readOnly) return false
         parent?.requestDisallowInterceptTouchEvent(true)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {

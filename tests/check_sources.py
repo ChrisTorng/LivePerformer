@@ -33,14 +33,14 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.2.1' in workflow and 'versionCode = 7' in gradle
+assert 'v0.3.0' in workflow and 'versionCode = 8' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
 store=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontLibrary.kt').read_text()
 assert 'id == "phdr"' in parser and 'id == "INAM"' in parser
 assert 'fun existingFor' in store and 'fun remove' in store
-assert 'NativeEngine.selectPreset' in activity
+assert 'looper.setPreset' in activity
 assert 'PulseLatencyTester.summarize' in activity
 assert 'NativeEngine.xrunCount()' in activity
 assert 'testDebugUnitTest' in workflow
@@ -51,7 +51,7 @@ assert 'registerAudioDeviceCallback' in activity and 'AudioDeviceInfo' in activi
 assert 'NativeEngine.restart' in activity and 'consumeReconnectRequest' in native
 assert 'onErrorAfterClose' in native and 'builder.setDeviceId(deviceId)' in native
 assert 'fluid_synth_set_gain' in native and 'NativeEngine.setGain' in activity
-assert 'presetBank:' in activity and 'presetProgram:' in activity
+assert 'instrument-families' in (root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPicker.kt').read_text()
 assert 'putFloat("velocity"' in activity and 'putFloat("gain"' in activity
 assert 'putInt("baseNote"' in activity
 print('PASS: AAudio device recovery, selected preset, velocity, octave and gain persistence')
@@ -61,8 +61,11 @@ looper=(root/'app/src/main/java/tw/idv/christorng/liveperformer/LoopController.k
 math=(root/'app/src/main/java/tw/idv/christorng/liveperformer/LoopMath.kt').read_text()
 keyboard=(root/'app/src/main/java/tw/idv/christorng/liveperformer/PianoKeyboardView.kt').read_text()
 midi=(root/'app/src/main/java/tw/idv/christorng/liveperformer/MidiInput.kt').read_text()
-for required in ('LoopController(context)', 'looper::onMidi', 'looper.recordPause()', 'looper.playPause()', 'looper.addTrack()', 'looper.clearSelected()', 'looper::setMetronome', 'looper.setBpm'):
+panel=(root/'app/src/main/java/tw/idv/christorng/liveperformer/PerformancePanel.kt').read_text()
+for required in ('LoopController(context)', 'looper::onMidi', 'PerformancePanel(', 'showSettings = true', 'NativeEngine.loadFontCollection'):
     assert required in activity, required
+for required in ('looper.recordPause()', 'looper.playPause()', 'looper.addTrack()', 'looper.clearSelected()', 'looper.setMetronome', 'looper.setBpm'):
+    assert required in panel, required
 for required in ('ScheduledThreadPoolExecutor', 'nextOccurrence', 'recordStart', 'SharedPreferences', 'loop-session'):
     if required == 'SharedPreferences': continue
     assert required in looper, required
@@ -72,9 +75,9 @@ assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/LoopMathTest.kt'
 print('PASS: multitrack MIDI loop UI, routing, persistence and timeline tests wired')
 
 # The performance screen must never scroll with the keyboard.
-assert 'if (showSettings)' in activity and 'LoopTimeline(' in activity
-assert 'LazyColumn(' in activity and 'TrackPattern(' in activity
-assert 'showInstrumentPicker' in activity and 'GmCategories.names' in activity
+assert 'if (showSettings)' in activity and 'PianoRoll(' in panel
+assert 'LazyColumn(' in panel and 'state.progress' in panel
+assert 'showInstrumentPicker' in activity and 'GmCategories.names' in (root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPicker.kt').read_text()
 assert 'looper.loadDemo()' in activity
 assert 'android:icon="@mipmap/ic_launcher"' in manifest
 assert (root/'app/src/main/res/drawable/ic_launcher_foreground.xml').exists()
@@ -84,3 +87,12 @@ assert 'val strings = Track(3' in looper and 'val lead = Track(4' in looper
 assert 'val piano = Track(5' in looper
 assert 'nextId = 6' in looper
 print('PASS: compact performance UI, two-bar arrangement, categorised GM and launcher icon')
+
+assert 'enum class KeyboardMode' in panel and 'KeyboardMode.MONITOR' in panel
+assert 'val keyboardNotes' in looper and 'val noteRects' in looper
+assert 'exportDocument' in looper and 'importDocument' in looper
+assert 'fontId' in looper and 'NativeEngine.selectFontPreset' in looper
+cpp=(root/'app/src/main/cpp/NativeEngine.cpp').read_text()
+assert 'loadFonts(' in cpp and 'applyFontPreset' in cpp
+assert 'selectFontPreset' in (root/'app/src/main/java/tw/idv/christorng/liveperformer/NativeEngine.kt').read_text()
+print('PASS: multi-SF2 channels, project JSON, MIDI visual feedback, landscape piano roll')

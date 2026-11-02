@@ -5,6 +5,8 @@
 #include <fluidsynth.h>
 #include <algorithm>
 #include <atomic>
+#include <array>
+#include <vector>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -72,6 +74,7 @@ struct SynthInstance {
     fluid_settings_t* settings;
     fluid_synth_t* synth;
     int sfId{-1};
+    std::vector<int> fontIds;
     explicit SynthInstance(FluidApi* a, int rate, float gain) : api(a), settings(a->new_settings()), synth(nullptr) {
         if (!settings) return;
         api->settings_setnum(settings, "synth.sample-rate", rate);
@@ -101,6 +104,8 @@ class Engine final : public oboe::AudioStreamDataCallback, public oboe::AudioStr
     std::atomic<bool> running_{false};
     std::atomic<bool> reconnectRequested_{false};
     std::atomic<float> gain_{0.8f};
+    // Packed (fontIndex:8, bank:14, program:7). Sent in program-change events.
+    std::array<std::atomic<uint32_t>, 16> channelPresets_{};
     float lastAppliedGain_{-1.0f}; // Audio callback only.
     std::atomic<bool> overrun_{false};
     std::atomic<int64_t> lastDispatchUs_{-1};
@@ -162,19 +167,43 @@ public:
         // Never reopen from the audio callback; Kotlin coordinates a safe restart and SF2 reload.
         reconnectRequested_.store(true, std::memory_order_release);
     }
-    bool loadFont(const char* filename) {
-        if (!api_.init()) return false;
-        if (!running_) return false;
-        // The UI serializes loads; the audio callback must never block for disk IO.
+    bool loadFonts(const std::vector<std::string>& filenames) {
+        if (!api_.init() || !running_ || filenames.empty() || filenames.size() > 16) return false;
+        // Prepare an entirely new multi-SF2 synth off-thread; no concurrent sfload on
+        // the synthesizer the real-time callback is rendering.
         auto* ready = new SynthInstance(&api_, sampleRate_.load(), gain_.load());
-        if (!ready->valid() || (ready->sfId = api_.sfload(ready->synth, filename, 1)) < 0) { delete ready; return false; }
-        // Wait only on the background loader. Never wait in a callback/UI thread.
+        if (!ready->valid()) { delete ready; return false; }
+        for (const auto& name : filenames) {
+            const int id = api_.sfload(ready->synth, name.c_str(), 0);
+            if (id < 0) { delete ready; return false; }
+            ready->fontIds.push_back(id);
+        }
+        ready->sfId = ready->fontIds.front();
+        // The loading worker can wait. The audio callback must never block.
         while (pending_.load(std::memory_order_acquire) || retired_.load(std::memory_order_acquire)) {
+            if (!running_) { delete ready; return false; }
             collectRetired();
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         pending_.store(ready, std::memory_order_release);
         return true;
+    }
+    bool loadFont(const char* filename) { return loadFonts({filename}); }
+    void setChannelFontPreset(int ch, int fontIndex, int bank, int program) noexcept {
+        if (ch < 0 || ch >= 16) return;
+        const uint32_t packed = (static_cast<uint32_t>(fontIndex & 255) << 21)
+            | (static_cast<uint32_t>(bank & 16383) << 7) | (program & 127);
+        channelPresets_[ch].store(packed, std::memory_order_release);
+        note(lp::MidiType::SelectFontPreset, ch, 0, 0);
+    }
+    void applyFontPreset(SynthInstance* instance, int ch) noexcept {
+        if (!instance || instance->fontIds.empty()) return;
+        const uint32_t packed = channelPresets_[ch].load(std::memory_order_acquire);
+        const size_t fontIndex = (packed >> 21) & 255;
+        const int bank = (packed >> 7) & 16383;
+        const int program = packed & 127;
+        const size_t safeIndex = fontIndex < instance->fontIds.size() ? fontIndex : 0;
+        api_.program_select(instance->synth, ch, instance->fontIds[safeIndex], bank, program);
     }
     void collectRetired() {
         auto* old = retired_.exchange(nullptr, std::memory_order_acq_rel);
@@ -214,6 +243,7 @@ public:
             auto* prior = active_;
             active_ = next;
             lastAppliedGain_ = -1.0f;
+            for (int ch = 0; ch < 16; ++ch) applyFontPreset(active_, ch);
             // Prior synth is retired on the worker, never deleted on the audio thread.
             if (prior) retired_.store(prior, std::memory_order_release);
         }
@@ -245,6 +275,9 @@ public:
                 case lp::MidiType::Program: api_.program(active_->synth, c, event.data1); break;
                 case lp::MidiType::PresetSelect:
                     api_.program_select(active_->synth, c, active_->sfId, event.data2, event.data1);
+                    break;
+                case lp::MidiType::SelectFontPreset:
+                    applyFontPreset(active_, c);
                     break;
                 case lp::MidiType::AllSoundsOff:
                     for (int ch = 0; ch < 16; ++ch) api_.sounds_off(active_->synth, ch);
@@ -300,6 +333,27 @@ JNIEXPORT jboolean JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_loa
     const bool ok = engine().loadFont(cpath);
     env->ReleaseStringUTFChars(path, cpath);
     return ok;
+}
+JNIEXPORT jboolean JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_loadFontCollection(JNIEnv* env, jobject, jobjectArray paths) {
+    if (!paths) return JNI_FALSE;
+    const jsize n = env->GetArrayLength(paths);
+    if (n < 1 || n > 16) return JNI_FALSE;
+    std::vector<std::string> filenames;
+    filenames.reserve(n);
+    for (jsize i = 0; i < n; ++i) {
+        auto str = static_cast<jstring>(env->GetObjectArrayElement(paths, i));
+        if (!str) return JNI_FALSE;
+        const char* utf = env->GetStringUTFChars(str, nullptr);
+        if (!utf) { env->DeleteLocalRef(str); return JNI_FALSE; }
+        filenames.emplace_back(utf);
+        env->ReleaseStringUTFChars(str, utf);
+        env->DeleteLocalRef(str);
+    }
+    return engine().loadFonts(filenames);
+}
+JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_selectFontPreset(
+    JNIEnv*, jobject, jint channel, jint fontIndex, jint bank, jint program) {
+    engine().setChannelFontPreset(channel, fontIndex, bank, program);
 }
 JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_collectRetired(JNIEnv*, jobject) { engine().collectRetired(); }
 JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_midi(JNIEnv*, jobject, jint type, jint channel, jint a, jint b) {

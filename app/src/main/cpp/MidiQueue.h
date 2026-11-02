@@ -6,7 +6,7 @@
 
 namespace lp {
 
-enum class MidiType : uint8_t { NoteOn, NoteOff, Controller, PitchBend, Program, TestPulse, AllSoundsOff, PresetSelect };
+enum class MidiType : uint8_t { NoteOn, NoteOff, Controller, PitchBend, Program, TestPulse, AllSoundsOff, PresetSelect, SelectFontPreset };
 struct MidiEvent {
     MidiType type{};
     uint8_t channel{};

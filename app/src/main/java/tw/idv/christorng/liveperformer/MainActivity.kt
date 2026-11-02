@@ -79,67 +79,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private fun trackAccent(channel: Int): Color = when (channel) {
-    9 -> Color(0xFFF87171)
-    1 -> Color(0xFFFBBF24)
-    2 -> Color(0xFF4ADE80)
-    3 -> Color(0xFF60A5FA)
-    else -> Color(0xFFC084FC)
-}
-
-@Composable
-private fun LoopTimeline(loop: LoopView, modifier: Modifier = Modifier) {
-    Column(modifier) {
-        Row(modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("1", style = MaterialTheme.typography.labelSmall)
-            Text("${loop.bar}.${loop.beat}", style = MaterialTheme.typography.labelSmall)
-            Text("${loop.bars}", style = MaterialTheme.typography.labelSmall)
-        }
-        Canvas(modifier = Modifier.fillMaxWidth().height(28.dp)) {
-            val corner = androidx.compose.ui.geometry.CornerRadius(9.dp.toPx())
-            drawRoundRect(Color(0xFF1F2937), cornerRadius = corner)
-            drawRoundRect(
-                if (loop.recording) Color(0xFFEF4444) else Color(0xFF3B82F6),
-                size = androidx.compose.ui.geometry.Size(size.width * loop.progress, size.height),
-                cornerRadius = corner, alpha = .58f
-            )
-            for (step in 1 until loop.bars * 4) {
-                val x = size.width * step / (loop.bars * 4)
-                drawLine(
-                    if (step % 4 == 0) Color.White.copy(alpha = .75f)
-                    else Color.White.copy(alpha = .27f),
-                    Offset(x, 1.dp.toPx()), Offset(x, size.height - 1.dp.toPx()),
-                    strokeWidth = if (step % 4 == 0) 2.dp.toPx() else 1.dp.toPx()
-                )
-            }
-            val x = (size.width * loop.progress).coerceIn(0f, size.width)
-            drawLine(Color(0xFFECFEFF), Offset(x, 0f), Offset(x, size.height),
-                strokeWidth = 3.dp.toPx())
-        }
-    }
-}
-
-@Composable
-private fun TrackPattern(track: LoopTrackView, modifier: Modifier = Modifier) {
-    Canvas(modifier) {
-        val color = trackAccent(track.channel)
-        drawRoundRect(color.copy(alpha = .13f),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(5.dp.toPx()))
-        drawLine(Color.White.copy(alpha = .22f),
-            Offset(size.width / 2, 0f), Offset(size.width / 2, size.height),
-            strokeWidth = 1.dp.toPx())
-        for (hit in track.hits) {
-            val x = (hit * size.width).coerceIn(0f, size.width - 2.dp.toPx())
-            val w = (size.width / 30).coerceAtLeast(2.dp.toPx())
-            drawRoundRect(if (track.muted) Color.Gray else color,
-                topLeft = Offset(x, size.height * .22f), 
-                size = androidx.compose.ui.geometry.Size(w, size.height * .56f),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(1.dp.toPx()))
-        }
-    }
-}
-
 private fun loadBundledFont(context: Context): File {
     val dst = File(context.filesDir, "GeneralUser-GS.sf2")
     if (!dst.exists() || dst.length() < 10_000_000) {
@@ -179,6 +118,16 @@ private fun PerformerScreen() {
         PianoKeyboardView(context).apply { sendMidi = looper::onMidi }
     }
     val fonts = remember { mutableStateListOf<SoundFontItem>() }
+    var keyboardMode by remember {
+        mutableStateOf(runCatching {
+            KeyboardMode.valueOf(settings.getString("keyboardMode", "PLAY") ?: "PLAY")
+        }.getOrDefault(KeyboardMode.PLAY))
+    }
+    var keyboardOverride by remember {
+        mutableStateOf(settings.getBoolean("keyboardOverride", false))
+    }
+    var exportSettingsOnly by remember { mutableStateOf(false) }
+
     val presets = remember { mutableStateListOf<InstrumentPreset>() }
     var selectedFontId by remember { mutableStateOf("gm") }
     var presetIndex by remember { mutableIntStateOf(0) }
@@ -206,44 +155,43 @@ private fun PerformerScreen() {
     var testCount by remember { mutableIntStateOf(3) }
     var measurement by remember { mutableStateOf("尚未量測。需以喇叭或有線 Loopback 讓麥克風收到測試訊號。") }
 
-    suspend fun activate(item: SoundFontItem) {
+    /** Rebuild the synth off the audio thread with every imported font loaded at once. */
+    suspend fun activate(item: SoundFontItem? = null) {
         if (loading) return
         loading = true
-        message = "載入 ${item.title} 中…"
+        message = "載入音色庫…"
         try {
-            // Reading SF2 headers and creating the large synth remain off the UI/audio threads.
-            val result = withContext(Dispatchers.IO) {
-                val info = SoundFontPresets.read(item.file)
-                val ok = NativeEngine.loadSf2(item.file.absolutePath)
-                ok to info
+            val all = withContext(Dispatchers.IO) { library.all() }
+            require(all.isNotEmpty()) { "找不到音色庫" }
+            require(all.size <= 16) { "音色庫最多 16 套" }
+            val ok = withContext(Dispatchers.IO) {
+                NativeEngine.loadFontCollection(all.map { it.file.absolutePath }.toTypedArray())
             }
-            if (!result.first) {
-                message = "${item.title} 載入失敗；保留原音色庫。"
+            if (!ok) {
+                message = "載入失敗；保留之前音色庫"
             } else {
                 fonts.clear()
-                fonts.addAll(library.all())
-                selectedFontId = item.id
-                presets.clear()
-                presets.addAll(result.second.presets)
-                if (presets.isEmpty() && item.isBundled)
-                    presets.addAll(GmPrograms.names.mapIndexed { i, n -> InstrumentPreset(0, i, n) })
-                val savedBank = settings.getInt("presetBank:" + item.id, 0)
-                val savedProgram = settings.getInt("presetProgram:" + item.id, 0)
-                presetIndex = presets.indexOfFirst { it.bank == savedBank && it.program == savedProgram }
-                    .takeIf { it >= 0 } ?: 0
-                if (presets.isNotEmpty()) {
-                    val p = presets.first()
-                    NativeEngine.selectPreset(p.bank, p.program)
+                fonts.addAll(all)
+                looper.configureFonts(all)
+                if (item != null) {
+                    looper.setFont(item.id)
+                    selectedFontId = item.id
                 }
-                library.rememberSelected(item.id)
-                looper.refreshPrograms()
-                message = "${item.title} 已切換 · ${presets.size} 個音色"
+                val current = all.firstOrNull { it.id == (item?.id ?: "gm") } ?: all.first()
+                val info = withContext(Dispatchers.IO) {
+                    SoundFontPresets.read(current.file)
+                }
+                presets.clear()
+                presets.addAll(info.presets.ifEmpty {
+                    if (current.isBundled) GmPrograms.names.mapIndexed { i, n ->
+                        InstrumentPreset(0, i, n)
+                    } else emptyList()
+                })
+                message = "音色庫已就緒（${all.size}）"
             }
         } catch (ex: Exception) {
-            message = "切換音色庫失敗：${ex.message}"
-        } finally {
-            loading = false
-        }
+            message = "音色庫載入失敗：${ex.message}"
+        } finally { loading = false }
     }
 
     fun scanAudioOutputs() {
@@ -261,15 +209,13 @@ private fun PerformerScreen() {
         try {
             while (loading || measuring) delay(100)
             keyboard.allNotesOff()
-            val font = fonts.firstOrNull { it.id == selectedFontId }
             val ready = withContext(Dispatchers.IO) { NativeEngine.restart(requestedOutputId) }
             if (!ready) {
                 message = "音訊重新連線失敗，請選擇自動輸出或重新連接。"
                 return
             }
             NativeEngine.setGain(gain)
-            if (font != null) activate(font)
-            else message = "音訊已重新連線；尚未找到音色庫。"
+            activate()
         } catch (ex: Exception) {
             message = "音訊重新連線失敗：${ex.message}"
         } finally {
@@ -295,6 +241,40 @@ private fun PerformerScreen() {
             } finally { measuring = false }
         }
     }
+    val createJson = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val content = looper.exportDocument(exportSettingsOnly)
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use {
+                        it.write(content)
+                    } ?: error("無法寫入檔案")
+                }
+                message = "已儲存"
+            } catch (e: Exception) { message = "儲存失敗：${e.message}" }
+        }
+    }
+    val openJson = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val content = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use {
+                        it.readText()
+                    } ?: error("無法開啟檔案")
+                }
+                looper.importDocument(content)
+                val missing = looper.state.value.tracks.map { it.fontId }
+                    .filter { id -> fonts.none { it.id == id } }.distinct()
+                message = if (missing.isEmpty()) "已載入" else
+                    "已載入；缺少音色庫 ${missing.joinToString()}（暫用 GM）"
+            } catch (e: Exception) { message = "載入失敗：${e.message}" }
+        }
+    }
+
     val microphonePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -339,15 +319,22 @@ private fun PerformerScreen() {
     DisposableEffect(Unit) {
         val ready = NativeEngine.start()
         NativeEngine.setGain(gain)
-        val input = MidiInput(context, { midiStatus = it }, looper::onMidi)
+        val uiHandler = Handler(Looper.getMainLooper())
+        val input = MidiInput(context, { text ->
+            uiHandler.post {
+                midiStatus = text
+                if (!keyboardOverride) {
+                    keyboardMode = if (text.contains("尚未連接")) KeyboardMode.PLAY
+                        else KeyboardMode.MONITOR
+                }
+            }
+        }, looper::onMidi)
         if (ready) scope.launch {
             try {
                 withContext(Dispatchers.IO) { loadBundledFont(context) }
                 fonts.clear()
                 fonts.addAll(withContext(Dispatchers.IO) { library.all() })
-                val preferred = fonts.firstOrNull { it.id == library.preferredId() }
-                    ?: fonts.firstOrNull()
-                if (preferred != null) activate(preferred)
+                activate()
             } catch (ex: Exception) { message = "啟動失敗：${ex.message}" }
         } else message = "無法開啟低延遲音訊輸出"
         onDispose {
@@ -371,8 +358,16 @@ private fun PerformerScreen() {
             reconnectAudio()
         }
     }
-    val selectedFont = fonts.firstOrNull { it.id == selectedFontId }
+    LaunchedEffect(loopState.keyboardNotes, keyboardMode) {
+        if (keyboardMode == KeyboardMode.MONITOR && loopState.keyboardNotes.isNotEmpty()) {
+            val pressed = loopState.keyboardNotes.minOrNull() ?: baseNote
+            if (pressed < baseNote || pressed > baseNote + 24) {
+                baseNote = ((pressed / 12) * 12 - 12).coerceIn(0, 96)
+            }
+        }
+    }
     val selectedTrack = loopState.tracks.firstOrNull { it.id == loopState.selectedId }
+    val selectedFont = fonts.firstOrNull { it.id == selectedTrack?.fontId }
     val selectedPreset = selectedTrack?.let { track ->
         presets.firstOrNull { it.bank == track.bank && it.program == track.program }
     } ?: presets.getOrNull(presetIndex)
@@ -404,13 +399,11 @@ private fun PerformerScreen() {
                 TextButton(onClick = {
                     deleteCandidate = null
                     scope.launch {
-                        if (selectedFontId == candidate.id) {
-                            val gm = fonts.firstOrNull { it.isBundled }
-                            if (gm != null) activate(gm)
-                        }
                         val ok = withContext(Dispatchers.IO) { library.remove(candidate) }
-                        fonts.clear()
-                        fonts.addAll(withContext(Dispatchers.IO) { library.all() })
+                        if (ok) {
+                            looper.replaceFont(candidate.id)
+                            activate()
+                        }
                         message = if (ok) "已刪除 ${candidate.title}" else "刪除失敗，請重新嘗試"
                     }
                 }) { Text("刪除") }
@@ -435,65 +428,19 @@ private fun PerformerScreen() {
         )
     }
 
-    if (showInstrumentPicker) {
-        val track = loopState.tracks.firstOrNull { it.id == loopState.selectedId }
-        if (track == null || track.channel == 9) {
-            LaunchedEffect(track?.id) { showInstrumentPicker = false }
-        } else {
-            var family by remember(track.id) {
-                mutableIntStateOf(GmCategories.family(track.program))
-            }
-            val familyPresets = presets.filter { GmCategories.family(it.program) == family }
-            val familyDefault = settings.getInt(
-                "lastGMFamily:$family", GmCategories.defaults[family]
-            )
-            val recommended = familyPresets.firstOrNull {
-                it.bank == 0 && it.program == familyDefault
-            } ?: familyPresets.firstOrNull()
-            AlertDialog(
-                onDismissRequest = { showInstrumentPicker = false },
-                title = { Text("選擇樂器", style = MaterialTheme.typography.titleLarge) },
-                text = {
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            GmCategories.names.forEachIndexed { index, name ->
-                                FilterChip(selected = family == index, onClick = { family = index },
-                                    label = { Text(name, maxLines = 1) })
-                            }
-                        }
-                        if (recommended != null) {
-                            TextButton(onClick = {
-                                looper.setPreset(recommended.bank, recommended.program)
-                                settings.edit().putInt("lastGMFamily:$family", recommended.program).apply()
-                                showInstrumentPicker = false
-                            }) { Text("★ 上次使用／預設：${recommended.displayName}", maxLines = 2) }
-                        }
-                        LazyColumn(modifier = Modifier.heightIn(max = 310.dp)) {
-                            items(familyPresets) { preset ->
-                                TextButton(
-                                    onClick = {
-                                        looper.setPreset(preset.bank, preset.program)
-                                        settings.edit().putInt(
-                                            "lastGMFamily:$family", preset.program
-                                        ).apply()
-                                        showInstrumentPicker = false
-                                    }, modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(preset.displayName, modifier = Modifier.fillMaxWidth(),
-                                        maxLines = 2)
-                                }
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { showInstrumentPicker = false }) { Text("關閉") }
-                }
-            )
-        }
+    if (showInstrumentPicker && selectedTrack != null) {
+        SoundFontPicker(
+            track = selectedTrack,
+            fonts = fonts,
+            context = context,
+            onChoose = { fontId, bank, program ->
+                looper.setFont(fontId)
+                looper.setPreset(bank, program)
+                selectedFontId = fontId
+            },
+            onCategory = { looper.setCategory(it) },
+            onClose = { showInstrumentPicker = false }
+        )
     }
 
     if (showSettings) {
@@ -528,63 +475,36 @@ private fun PerformerScreen() {
                 Switch(checked = loopState.metronome, onCheckedChange = looper::setMetronome)
             }
             HorizontalDivider()
-            Text("音色庫（SoundFont）", style = MaterialTheme.typography.titleMedium)
-            ExposedDropdownMenuBox(expanded = showFonts, onExpandedChange = { showFonts = it && !loading }) {
-                OutlinedTextField(
-                    value = selectedFont?.let { "${it.title} · ${it.sizeMiB} MiB" } ?: "尚未載入",
-                    onValueChange = {}, readOnly = true, singleLine = true,
-                    label = { Text("目前音色庫") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(showFonts) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                )
-                ExposedDropdownMenu(expanded = showFonts, onDismissRequest = { showFonts = false }) {
-                    fonts.forEach { font ->
-                        DropdownMenuItem(
-                            text = { Text("${font.title} · ${font.sizeMiB} MiB") },
-                            onClick = {
-                                showFonts = false
-                                if (font.id != selectedFontId) scope.launch { activate(font) }
-                            }
-                        )
+            Text("專案", style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(onClick = {
+                    exportSettingsOnly = false
+                    createJson.launch("LivePerformer-project.json")
+                }) { Text("存專案") }
+                OutlinedButton(onClick = {
+                    openJson.launch(arrayOf("application/json", "text/plain", "*/*"))
+                }) { Text("讀取") }
+                OutlinedButton(onClick = {
+                    exportSettingsOnly = true
+                    createJson.launch("LivePerformer-settings.json")
+                }) { Text("存設定") }
+            }
+            Text("音色庫", style = MaterialTheme.typography.titleMedium)
+            fonts.forEach { font ->
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(font.title, modifier = Modifier.weight(1f), maxLines = 1)
+                    if (!font.isBundled) {
+                        TextButton(onClick = { deleteCandidate = font }) { Text("刪除") }
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(enabled = !loading, onClick = { picker.launch(arrayOf("*/*")) }) {
-                    Text("匯入 SF2 / ZIP / XZ")
-                }
-                if (selectedFont != null && !selectedFont.isBundled)
-                    OutlinedButton(enabled = !loading, onClick = { deleteCandidate = selectedFont }) {
-                        Text("刪除音色")
-                    }
-            }
-            ExposedDropdownMenuBox(expanded = showPresets,
-                onExpandedChange = { showPresets = it && !loading && selectedTrack?.channel != 9 }) {
-                OutlinedTextField(
-                    value = if (selectedTrack?.channel == 9) "鼓組（GM MIDI Ch 10）"
-                        else selectedPreset?.displayName ?: "找不到可用樂器預設",
-                    onValueChange = {}, readOnly = true, singleLine = true,
-                    label = { Text("目前音色庫的樂器／Preset") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(showPresets) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                )
-                ExposedDropdownMenu(expanded = showPresets, onDismissRequest = { showPresets = false }) {
-                    presets.forEachIndexed { index, preset ->
-                        DropdownMenuItem(
-                            text = { Text(preset.displayName) },
-                            onClick = {
-                                presetIndex = index
-                                looper.setPreset(preset.bank, preset.program)
-                                settings.edit()
-                                    .putInt("presetBank:" + selectedFontId, preset.bank)
-                                    .putInt("presetProgram:" + selectedFontId, preset.program)
-                                    .apply()
-                                showPresets = false
-                            }
-                        )
-                    }
-                }
-            }
+            OutlinedButton(enabled = !loading, onClick = {
+                picker.launch(arrayOf("*/*"))
+            }) { Text("匯入 SF2 / ZIP / XZ") }
+            OutlinedButton(onClick = {
+                showInstrumentPicker = true
+            }) { Text("目前音軌選樂器") }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
                     baseNote = (baseNote - 12).coerceAtLeast(0)
@@ -663,210 +583,31 @@ private fun PerformerScreen() {
             Text("LivePerformer v$version", style = MaterialTheme.typography.labelSmall)
         }
     } else {
-        Column(
-            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(horizontal = 10.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().height(40.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("LivePerformer", style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                if (loading || restarting)
-                    Text("載入中…", style = MaterialTheme.typography.labelSmall)
-                TextButton(onClick = { showSettings = true }) {
-                    Text("⚙ 設定")
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth().height(42.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { looper.setBpm(loopState.bpm - 1) }) { Text("−") }
-                    Text("${loopState.bpm}", fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleLarge)
-                    Text(" BPM", style = MaterialTheme.typography.labelSmall)
-                    TextButton(onClick = { looper.setBpm(loopState.bpm + 1) }) { Text("+") }
-                }
-                Box {
-                    TextButton(onClick = { showBarsMenu = true }) {
-                        Text("${loopState.bars} 小節 ⌄")
-                    }
-                    DropdownMenu(expanded = showBarsMenu,
-                        onDismissRequest = { showBarsMenu = false }) {
-                        listOf(1, 2, 4, 8).forEach { count ->
-                            DropdownMenuItem(
-                                text = { Text("$count 小節") },
-                                onClick = {
-                                    looper.setBars(count)
-                                    showBarsMenu = false
-                                }
-                            )
-                        }
-                    }
-                }
-                TextButton(onClick = { looper.setMetronome(!loopState.metronome) }) {
-                    Text(if (loopState.metronome) "♩" else "♩̸")
-                }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("音量", style = MaterialTheme.typography.labelSmall)
-                Slider(value = gain, onValueChange = {
+        Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+            PerformancePanel(
+                state = loopState, looper = looper, keyboard = keyboard,
+                keyboardMode = keyboardMode,
+                onKeyboardMode = {
+                    keyboardMode = keyboardMode.next()
+                    keyboardOverride = true
+                    settings.edit().putBoolean("keyboardOverride", true)
+                        .putString("keyboardMode", keyboardMode.name).apply()
+                },
+                baseNote = baseNote,
+                onBaseNote = {
+                    baseNote = it
+                    settings.edit().putInt("baseNote", it).apply()
+                },
+                velocity = velocity.toInt(), volume = gain,
+                onVolume = {
                     gain = it
                     NativeEngine.setGain(it)
                     settings.edit().putFloat("gain", it).apply()
-                }, modifier = Modifier.weight(1f).height(37.dp), valueRange = 0.1f..1.5f)
-            }
-            Text(
-                when {
-                    loopState.recording -> "● 錄製中"
-                    loopState.armed -> "● 等待下一輪錄製"
-                    loopState.playing -> "▶ 播放中"
-                    else -> "Ⅱ 暫停"
                 },
-                color = if (loopState.recording) Color(0xFFF87171)
-                    else MaterialTheme.colorScheme.onSurface,
-                style = MaterialTheme.typography.labelSmall
-            )
-            LoopTimeline(loopState, modifier = Modifier.fillMaxWidth().height(50.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth().height(55.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                Button(onClick = { looper.playPause() }) {
-                    Text(if (loopState.playing) "Ⅱ" else "▶", fontSize = 21.sp)
-                }
-                Button(
-                    onClick = { looper.recordPause() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (loopState.recording || loopState.armed)
-                            Color(0xFFCC333D) else Color(0xFF8E2C38)
-                    )
-                ) {
-                    Text(if (loopState.recording || loopState.armed) "■" else "●",
-                        fontSize = 21.sp)
-                }
-                OutlinedButton(onClick = { looper.clearSelected() }) { Text("清除") }
-                OutlinedButton(onClick = { showDemoConfirmation = true }) { Text("示範") }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth().height(36.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("樂器軌", style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.weight(1f))
-                TextButton(onClick = {
-                    if (!looper.addTrack()) message = "樂器軌已滿"
-                }) { Text("＋ 樂器") }
-                TextButton(onClick = {
-                    if (!looper.addTrack(drums = true)) message = "鼓組軌已存在"
-                }) { Text("＋ 鼓") }
-            }
-            LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                items(loopState.tracks, key = { it.id }) { track ->
-                    val selected = track.id == loopState.selectedId
-                    val instrumentName = if (track.channel == 9) "鼓組"
-                        else GmPrograms.names.getOrNull(track.program) ?: "樂器"
-                    val family = if (track.channel == 9) "鼓"
-                        else GmCategories.names[GmCategories.family(track.program)]
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().height(51.dp)
-                            .clickable { looper.selectTrack(track.id) },
-                        color = if (selected) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
-                            Box(
-                                Modifier.width(4.dp).height(34.dp)
-                                    .background(trackAccent(track.channel), RoundedCornerShape(3.dp))
-                            )
-                            Column(modifier = Modifier.width(57.dp)) {
-                                Text(track.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
-                                Text(family, style = MaterialTheme.typography.labelSmall)
-                            }
-                            if (track.channel != 9) {
-                                TextButton(
-                                    modifier = Modifier.width(76.dp),
-                                    onClick = {
-                                        looper.selectTrack(track.id)
-                                        showInstrumentPicker = true
-                                    }, contentPadding = PaddingValues(horizontal = 1.dp)
-                                ) {
-                                    Text(instrumentName, maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                        style = MaterialTheme.typography.labelSmall)
-                                }
-                            } else {
-                                Text("GM", style = MaterialTheme.typography.labelSmall,
-                                    modifier = Modifier.width(76.dp))
-                            }
-                            TrackPattern(track, Modifier.weight(1f).height(32.dp))
-                            Box {
-                                TextButton(
-                                    onClick = { openTrackMenu = track.id },
-                                    contentPadding = PaddingValues(0.dp),
-                                    modifier = Modifier.width(31.dp)
-                                ) { Text("⋮") }
-                                DropdownMenu(
-                                    expanded = openTrackMenu == track.id,
-                                    onDismissRequest = { openTrackMenu = null }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text(if (track.muted) "取消靜音" else "靜音") },
-                                        onClick = { looper.muteTrack(track.id); openTrackMenu = null }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("刪除樂器軌") },
-                                        enabled = loopState.tracks.size > 1,
-                                        onClick = {
-                                            pendingTrackRemoval = track.id
-                                            openTrackMenu = null
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth().height(32.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("鍵盤", style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.weight(1f))
-                TextButton(onClick = {
-                    baseNote = (baseNote - 12).coerceAtLeast(0)
-                    settings.edit().putInt("baseNote", baseNote).apply()
-                }) { Text("−") }
-                Text("C${baseNote / 12 - 1}", style = MaterialTheme.typography.labelMedium)
-                TextButton(onClick = {
-                    baseNote = (baseNote + 12).coerceAtMost(96)
-                    settings.edit().putInt("baseNote", baseNote).apply()
-                }) { Text("+") }
-            }
-            AndroidView(
-                factory = { keyboard },
-                update = { view ->
-                    view.baseNote = baseNote
-                    view.velocity = velocity.toInt()
-                },
-                modifier = Modifier.fillMaxWidth().height(172.dp)
+                onSettings = { showSettings = true },
+                onInstrument = { showInstrumentPicker = true },
+                onDemo = { showDemoConfirmation = true },
+                onDelete = { pendingTrackRemoval = it }
             )
         }
     }

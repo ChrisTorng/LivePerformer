@@ -1,4 +1,4 @@
-# LivePerformer — Android low-latency MIDI instrument and looper (v0.2.1)
+# LivePerformer — Android low-latency MIDI instrument and looper (v0.3.0)
 
 **Status: early source prototype, not yet device-verified.** Initial target: Samsung Galaxy A25 5G, USB MIDI keyboard, wired 3.5 mm headphones. v0.2.1 adds an ergonomic single-screen interface and v0.2 includes an experimental MIDI-only loop recorder; physical device performance remains unverified.
 
@@ -64,3 +64,12 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - Settings screen contains SoundFont import, audio route, master controls and diagnostic recording.
 - Factory demo is two *different* bars of drums (bar 2 fill), bass (C/A minor phrases), string chords and a lead melody. The piano track is empty and selected to practise. **示範** prompts before replacing existing projects, including those migrated from v0.2.
 - Launcher now has a dedicated adaptive loop/note icon.
+
+## v0.3 controls
+
+- Landscape-first: ▶/Ⅱ, ●/■, clear, BPM and bar count on a compact row; white playhead moves across all pitch/length/velocity lanes.
+- Tap a track to select; tap its label again to choose a General MIDI category, imported SoundFont, and preset.
+- Keyboard button cycles playable / MIDI monitor / hidden. USB MIDI auto-selects monitor until the mode is manually overridden.
+- Settings → 存專案 / 讀取 / 存設定. Project files contain MIDI clips; settings files do not, and reading settings preserves matching track clips.
+- SoundFonts are device-local. Import matching SF2 files before opening a project that references them.
+- Android soft scheduler remains best effort and requires real-device latency testing.
