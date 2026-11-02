@@ -438,6 +438,7 @@ private fun PerformerScreen() {
                 looper.setPreset(bank, program)
                 selectedFontId = fontId
             },
+            onCategory = { looper.setCategory(it) },
             onClose = { showInstrumentPicker = false }
         )
     }
