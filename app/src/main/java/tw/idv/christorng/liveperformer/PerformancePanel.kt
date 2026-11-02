@@ -38,12 +38,21 @@ private fun laneColor(channel: Int): Color = colors[if (channel == 9) 0 else (ch
 
 @Composable
 private fun SmallAction(label: String, onClick: () -> Unit, emphasized: Boolean = false) {
-    if (emphasized) {
-        Button(onClick = onClick, contentPadding = PaddingValues(horizontal = 11.dp),
-            modifier = Modifier.height(35.dp)) { Text(label, fontSize = 14.sp) }
-    } else {
-        TextButton(onClick = onClick, contentPadding = PaddingValues(horizontal = 5.dp),
-            modifier = Modifier.height(34.dp)) { Text(label, fontSize = 13.sp, maxLines = 1) }
+    val width = when {
+        label.length <= 1 -> 34.dp
+        label.length <= 3 -> 45.dp
+        else -> 52.dp
+    }
+    Box(
+        modifier = Modifier.width(width).height(34.dp)
+            .background(if (emphasized) MaterialTheme.colorScheme.primary
+                else Color.Transparent, RoundedCornerShape(9.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, fontSize = if (emphasized) 18.sp else 12.sp,
+            color = if (emphasized) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.primary, maxLines = 1)
     }
 }
 
