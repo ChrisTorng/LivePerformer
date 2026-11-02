@@ -79,67 +79,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private fun trackAccent(channel: Int): Color = when (channel) {
-    9 -> Color(0xFFF87171)
-    1 -> Color(0xFFFBBF24)
-    2 -> Color(0xFF4ADE80)
-    3 -> Color(0xFF60A5FA)
-    else -> Color(0xFFC084FC)
-}
-
-@Composable
-private fun LoopTimeline(loop: LoopView, modifier: Modifier = Modifier) {
-    Column(modifier) {
-        Row(modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("1", style = MaterialTheme.typography.labelSmall)
-            Text("${loop.bar}.${loop.beat}", style = MaterialTheme.typography.labelSmall)
-            Text("${loop.bars}", style = MaterialTheme.typography.labelSmall)
-        }
-        Canvas(modifier = Modifier.fillMaxWidth().height(28.dp)) {
-            val corner = androidx.compose.ui.geometry.CornerRadius(9.dp.toPx())
-            drawRoundRect(Color(0xFF1F2937), cornerRadius = corner)
-            drawRoundRect(
-                if (loop.recording) Color(0xFFEF4444) else Color(0xFF3B82F6),
-                size = androidx.compose.ui.geometry.Size(size.width * loop.progress, size.height),
-                cornerRadius = corner, alpha = .58f
-            )
-            for (step in 1 until loop.bars * 4) {
-                val x = size.width * step / (loop.bars * 4)
-                drawLine(
-                    if (step % 4 == 0) Color.White.copy(alpha = .75f)
-                    else Color.White.copy(alpha = .27f),
-                    Offset(x, 1.dp.toPx()), Offset(x, size.height - 1.dp.toPx()),
-                    strokeWidth = if (step % 4 == 0) 2.dp.toPx() else 1.dp.toPx()
-                )
-            }
-            val x = (size.width * loop.progress).coerceIn(0f, size.width)
-            drawLine(Color(0xFFECFEFF), Offset(x, 0f), Offset(x, size.height),
-                strokeWidth = 3.dp.toPx())
-        }
-    }
-}
-
-@Composable
-private fun TrackPattern(track: LoopTrackView, modifier: Modifier = Modifier) {
-    Canvas(modifier) {
-        val color = trackAccent(track.channel)
-        drawRoundRect(color.copy(alpha = .13f),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(5.dp.toPx()))
-        drawLine(Color.White.copy(alpha = .22f),
-            Offset(size.width / 2, 0f), Offset(size.width / 2, size.height),
-            strokeWidth = 1.dp.toPx())
-        for (hit in track.hits) {
-            val x = (hit * size.width).coerceIn(0f, size.width - 2.dp.toPx())
-            val w = (size.width / 30).coerceAtLeast(2.dp.toPx())
-            drawRoundRect(if (track.muted) Color.Gray else color,
-                topLeft = Offset(x, size.height * .22f), 
-                size = androidx.compose.ui.geometry.Size(w, size.height * .56f),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(1.dp.toPx()))
-        }
-    }
-}
-
 private fun loadBundledFont(context: Context): File {
     val dst = File(context.filesDir, "GeneralUser-GS.sf2")
     if (!dst.exists() || dst.length() < 10_000_000) {
