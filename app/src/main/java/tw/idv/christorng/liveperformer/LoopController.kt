@@ -494,7 +494,6 @@ class LoopController(context: Context) {
     }
     @Synchronized fun setPreset(bank: Int, program: Int) {
         val track = tracks.firstOrNull { it.id == selectedId } ?: return
-        if (track.channel == 9) return
         track.bank = bank
         track.program = program
         NativeEngine.selectFontPreset(track.channel, fontIndexes[track.fontId] ?: 0, bank, program)
@@ -502,7 +501,6 @@ class LoopController(context: Context) {
     }
     @Synchronized fun setFont(fontId: String) {
         val t = tracks.firstOrNull { it.id == selectedId } ?: return
-        if (t.channel == 9) return
         if (!fontIndexes.containsKey(fontId)) return
         t.fontId = fontId
         NativeEngine.selectFontPreset(t.channel, fontIndexes[fontId] ?: 0, t.bank, t.program)
