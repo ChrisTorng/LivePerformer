@@ -1,6 +1,7 @@
 package tw.idv.christorng.liveperformer
 
 import android.os.Bundle
+import android.view.WindowManager
 import android.os.Handler
 import android.os.Looper
 import android.media.AudioDeviceCallback
@@ -51,6 +52,8 @@ import java.io.File
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A performer can play without touching the display for minutes at a time.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // Android 15 enforces edge-to-edge; Compose applies the safe insets explicitly.
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
@@ -116,6 +119,7 @@ private fun PerformerScreen() {
     val settings = remember(context) { context.getSharedPreferences("performer", Context.MODE_PRIVATE) }
     val audioManager = remember(context) { context.getSystemService(AudioManager::class.java) }
     val looper = remember(context) { LoopController(context) }
+    val projectStorage = remember(context) { ProjectStorage(context) }
     val loopState by looper.state.collectAsState()
     val keyboard = remember(context, looper) {
         PianoKeyboardView(context).apply { sendMidi = looper::onMidi }
@@ -144,6 +148,16 @@ private fun PerformerScreen() {
     var showInstrumentPicker by remember { mutableStateOf(false) }
     var showBarsMenu by remember { mutableStateOf(false) }
     var showDemoConfirmation by remember { mutableStateOf(false) }
+    var showNewChoices by remember { mutableStateOf(false) }
+    var showProjectLibrary by remember { mutableStateOf(false) }
+    var projectLibraryVersion by remember { mutableIntStateOf(0) }
+    var showSaveDialog by remember { mutableStateOf(false) }
+    var saveName by remember { mutableStateOf(ProjectStorage.suggestedName()) }
+    var saveAsTemplate by remember { mutableStateOf(false) }
+    var pendingStructure by remember { mutableStateOf<Triple<Int, Int, Int>?>(null) }
+    var pendingTrackClear by remember { mutableStateOf<Int?>(null) }
+    var renameTrackId by remember { mutableStateOf<Int?>(null) }
+    var renameValue by remember { mutableStateOf("") }
     var openTrackMenu by remember { mutableStateOf<Int?>(null) }
     var deleteCandidate by remember { mutableStateOf<SoundFontItem?>(null) }
     var loading by remember { mutableStateOf(false) }
@@ -253,7 +267,7 @@ private fun PerformerScreen() {
     }
 
     val createJson = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json")
+        ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
         if (uri == null) {
             saveBeforeLoad = false
@@ -396,6 +410,121 @@ private fun PerformerScreen() {
     } ?: presets.getOrNull(presetIndex)
     var pendingTrackRemoval by remember { mutableStateOf<Int?>(null) }
 
+    pendingTrackClear?.let { id ->
+        val name = loopState.tracks.firstOrNull { it.id == id }?.name ?: "音軌"
+        AlertDialog(
+            onDismissRequest = { pendingTrackClear = null },
+            title = { Text("清除 $name 的錄製？") },
+            text = { Text("此操作會移除該軌所有已錄製音符，保留樂器與音軌設定。") },
+            confirmButton = { TextButton(onClick = {
+                looper.clearTrack(id)
+                pendingTrackClear = null
+            }) { Text("清除") } },
+            dismissButton = { TextButton(onClick = { pendingTrackClear = null }) { Text("取消") } }
+        )
+    }
+    renameTrackId?.let { id ->
+        AlertDialog(
+            onDismissRequest = { renameTrackId = null },
+            title = { Text("重新命名音軌") },
+            text = { OutlinedTextField(
+                value = renameValue, onValueChange = { renameValue = it },
+                singleLine = true, label = { Text("音軌名稱") }
+            ) },
+            confirmButton = { TextButton(onClick = {
+                looper.renameTrack(id, renameValue)
+                renameTrackId = null
+            }, enabled = renameValue.isNotBlank()) { Text("儲存") } },
+            dismissButton = { TextButton(onClick = { renameTrackId = null }) { Text("取消") } }
+        )
+    }
+    pendingStructure?.let { request ->
+        AlertDialog(
+            onDismissRequest = { pendingStructure = null },
+            title = { Text("部分音符會被刪除") },
+            text = { Text("縮短小節或變更拍號後，超出新循環範圍的 MIDI 音符將被移除。確定套用？") },
+            confirmButton = { TextButton(onClick = {
+                looper.setStructure(request.first, request.second, request.third)
+                pendingStructure = null
+            }) { Text("確認變更") } },
+            dismissButton = { TextButton(onClick = { pendingStructure = null }) { Text("取消") } }
+        )
+    }
+
+    if (showSaveDialog) {
+        AlertDialog(
+            onDismissRequest = { showSaveDialog = false; saveBeforeLoad = false },
+            title = { Text(if (saveAsTemplate) "儲存音軌範本" else "儲存專案") },
+            text = {
+                Column {
+                    OutlinedTextField(value = saveName, onValueChange = { saveName = it },
+                        singleLine = true, label = { Text("名稱") })
+                    Text("副檔名：" + if (saveAsTemplate) ".lvpt" else ".lvp",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = { TextButton(onClick = {
+                showSaveDialog = false
+                scope.launch {
+                    try {
+                        val content = looper.exportDocument(saveAsTemplate)
+                        val saved = withContext(Dispatchers.IO) {
+                            projectStorage.save(saveName, saveAsTemplate, content)
+                        }
+                        projectLibraryVersion++
+                        if (!saveAsTemplate) looper.markSavedIfUnchanged(content)
+                        message = "已儲存 ${saved.fileName}"
+                        if (saveBeforeLoad && !looper.needsSaveBeforeReplace()) {
+                            val resume = pendingLoadAction
+                            pendingLoadAction = null
+                            resume?.invoke()
+                        }
+                    } catch (e: Exception) { message = "儲存失敗：${e.message}" }
+                    finally { saveBeforeLoad = false }
+                }
+            }) { Text("儲存") } },
+            dismissButton = { TextButton(onClick = {
+                showSaveDialog = false
+                saveBeforeLoad = false
+            }) { Text("取消") } }
+        )
+    }
+    if (showProjectLibrary) {
+        val entries = remember(projectLibraryVersion) { projectStorage.list() }
+        AlertDialog(
+            onDismissRequest = { showProjectLibrary = false },
+            title = { Text("讀取專案／範本") },
+            text = {
+                if (entries.isEmpty()) Text("尚未儲存專案。")
+                else LazyColumn(Modifier.heightIn(max = 300.dp)) {
+                    items(entries, key = { it.fileName }) { entry ->
+                        TextButton(onClick = {
+                            showProjectLibrary = false
+                            guardedLoad {
+                                scope.launch {
+                                    try {
+                                        val json = withContext(Dispatchers.IO) {
+                                            projectStorage.read(entry)
+                                        }
+                                        looper.importDocument(json)
+                                        settingsPage = null
+                                        message = "已讀取 ${entry.fileName}"
+                                    } catch (e: Exception) {
+                                        message = "讀取失敗：${e.message}"
+                                    }
+                                }
+                            }
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text(entry.fileName, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showProjectLibrary = false }) {
+                Text("關閉")
+            } }
+        )
+    }
     pendingTrackRemoval?.let { trackId ->
         AlertDialog(
             onDismissRequest = { pendingTrackRemoval = null },
@@ -447,7 +576,9 @@ private fun PerformerScreen() {
                 TextButton(onClick = {
                     saveBeforeLoad = true
                     exportSettingsOnly = false
-                    createJson.launch("LivePerformer-project.json")
+                    saveName = ProjectStorage.suggestedName()
+                    saveAsTemplate = false
+                    showSaveDialog = true
                 }) { Text("先儲存再讀取") }
             },
             dismissButton = {
@@ -481,12 +612,6 @@ private fun PerformerScreen() {
                 }
                 selectedFontId = fontId
             },
-            onDelete = if (addingInstrument) null else ({
-                selectedTrack?.let { track ->
-                    if (track.notes == 0) looper.removeTrack(track.id)
-                    else pendingTrackRemoval = track.id
-                }
-            }),
             onClose = { showInstrumentPicker = false }
         )
     }
