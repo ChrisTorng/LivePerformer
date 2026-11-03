@@ -21,9 +21,12 @@ class SoundFontLibrary(private val context: Context) {
         directory.listFiles()?.filter {
             it.isFile && it.name.startsWith("imported-") && it.name.endsWith(".sf2", true)
         }?.sortedBy { it.name }?.forEach { file ->
-            val label = prefs.getString("title:" + file.name, null)
+            val stored = prefs.getString("title:" + file.name, null)
                 ?: runCatching { SoundFontPresets.read(file).title }.getOrNull()
-                ?: file.name
+            val sourceName = prefs.getString("source:" + file.name, null)
+                ?.substringBeforeLast(':')?.substringBeforeLast('.')
+                ?: file.name.removePrefix("imported-").substringBeforeLast('.')
+            val label = InstrumentNaming.bestName(stored, sourceName)
             result += SoundFontItem(file.name, label, file, false)
         }
         return result
@@ -59,8 +62,10 @@ class SoundFontLibrary(private val context: Context) {
 
     fun register(uri: Uri, file: File): SoundFontItem {
         val (sourceName, sourceSize) = sourceMetadata(uri)
-        val title = runCatching { SoundFontPresets.read(file).title }.getOrNull()
-            ?.takeIf { it.isNotBlank() } ?: sourceName.substringBeforeLast('.')
+        val title = InstrumentNaming.bestName(
+            runCatching { SoundFontPresets.read(file).title }.getOrNull(),
+            sourceName.substringBeforeLast('.')
+        )
         prefs.edit()
             .putString("title:" + file.name, title)
             .putString("source:" + file.name, "$sourceName:$sourceSize")
