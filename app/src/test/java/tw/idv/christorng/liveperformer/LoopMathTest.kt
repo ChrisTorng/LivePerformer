@@ -24,6 +24,29 @@ class LoopMathTest {
         assertEquals(960.0, LoopMath.nextOccurrence(0.0, 960, 7680), 0.001)
         assertEquals(0.0, LoopMath.nextOccurrence(-0.01, 0, 7680), 0.001)
     }
+    @Test fun earlyDownbeatIsRetainedBySixteenthNoteGrid() {
+        val length = LoopMath.loopTicks(2)
+        assertEquals(240, LoopMath.quantizeStep(16))
+        assertEquals(120, LoopMath.preRollTicks(16))
+        assertEquals(0, LoopMath.quantize(-110.0, 16, length))
+        assertEquals(0, LoopMath.quantize(110.0, 16, length))
+        assertEquals(240, LoopMath.quantize(130.0, 16, length))
+        assertEquals(0, LoopMath.quantize(length - 80.0, 16, length, wrap = true))
+        assertEquals(length - 1, LoopMath.quantize(length - 10.0, 16, length))
+    }
+
+    @Test fun supportedQuantizationsProduceCorrectStep() {
+        assertEquals(960, LoopMath.quantizeStep(4))
+        assertEquals(480, LoopMath.quantizeStep(8))
+        assertEquals(240, LoopMath.quantizeStep(16))
+        assertEquals(120, LoopMath.quantizeStep(32))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun unsupportedQuantizationIsRejected() {
+        LoopMath.quantizeStep(13)
+    }
+
     @Test fun endOfTakeNeverLeaksIntoNextBar() {
         assertEquals(7679, LoopMath.recordedTick(8000.0, 0.0, 7680))
     }
