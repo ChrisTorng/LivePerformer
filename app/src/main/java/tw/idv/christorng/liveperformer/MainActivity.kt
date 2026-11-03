@@ -856,10 +856,11 @@ private fun PerformerScreen() {
                     addingInstrument = true
                     showInstrumentPicker = true
                 },
-                onDelete = { id ->
-                    val track = loopState.tracks.firstOrNull { it.id == id }
-                    if (track?.notes == 0) looper.removeTrack(id)
-                    else pendingTrackRemoval = id
+                onDelete = { id -> pendingTrackRemoval = id },
+                onClear = { id -> pendingTrackClear = id },
+                onRename = { id ->
+                    renameTrackId = id
+                    renameValue = loopState.tracks.firstOrNull { it.id == id }?.name.orEmpty()
                 }
             )
         }
