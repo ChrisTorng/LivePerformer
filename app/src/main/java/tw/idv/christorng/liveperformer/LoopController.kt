@@ -60,6 +60,7 @@ class LoopController(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("loop-session", Context.MODE_PRIVATE)
     private val tracks = mutableListOf<Track>()
     private val fontIndexes = mutableMapOf("gm" to 0)
+    private val fontTitles = mutableMapOf<String, String>()
     private val keysDown = mutableMapOf<Int, MutableSet<Int>>()
     private val scheduler = ScheduledThreadPoolExecutor(1) { command ->
         Thread(command, "LivePerformer-Loop").apply { priority = Thread.MAX_PRIORITY - 1 }
@@ -623,10 +624,23 @@ class LoopController(context: Context) {
         changed()
     }
 
+    private fun recoverInstrumentName(track: Track): Boolean {
+        if (track.fontId == "gm") return false
+        val source = fontTitles[track.fontId] ?: return false
+        val old = track.name.trim()
+        val generic = old.matches(Regex("(instrument|preset|樂器|鋼琴)( *[0-9]+)?",
+            RegexOption.IGNORE_CASE)) || old == "未命名樂器"
+        if (!generic) return false
+        track.name = source
+        track.category = InstrumentNaming.category(source, track.program, "Instrument")
+        return true
+    }
+
     @Synchronized fun setFont(fontId: String) {
         val t = tracks.firstOrNull { it.id == selectedId } ?: return
         if (!fontIndexes.containsKey(fontId)) return
         t.fontId = fontId
+        recoverInstrumentName(t)
         NativeEngine.selectFontPreset(t.channel, fontIndexes[fontId] ?: 0, t.bank, t.program)
         changed()
     }
@@ -638,9 +652,14 @@ class LoopController(context: Context) {
 
     @Synchronized fun configureFonts(items: List<SoundFontItem>) {
         fontIndexes.clear()
-        items.forEachIndexed { index, font -> fontIndexes[font.id] = index }
+        fontTitles.clear()
+        items.forEachIndexed { index, font ->
+            fontIndexes[font.id] = index
+            fontTitles[font.id] = font.title
+        }
+        val repaired = tracks.any { recoverInstrumentName(it) }
         refreshPrograms()
-        publish()
+        if (repaired) changed() else publish()
     }
     @Synchronized fun refreshPrograms() {
         for (t in tracks) {
