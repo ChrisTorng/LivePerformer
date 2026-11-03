@@ -48,9 +48,7 @@ fun SoundFontPicker(
             GmCategories.names[GmCategories.family(preset.program)]
         else InstrumentNaming.category(source?.title.orEmpty(), preset.program, preset.name)
 
-    val availableCategories = allPresets.map(::categoryOf).distinct().filter { cat ->
-        track == null || if (track.channel == 9) cat == "鼓組" else cat != "鼓組"
-    }
+    val availableCategories = allPresets.map(::categoryOf).distinct()
     val activeCategory = category.takeIf { it in availableCategories }
         ?: availableCategories.firstOrNull()
     val shownPresets = allPresets.filter { activeCategory != null && categoryOf(it) == activeCategory }
