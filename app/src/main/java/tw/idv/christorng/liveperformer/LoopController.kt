@@ -18,6 +18,7 @@ data class LoopTrackView(
     val bank: Int,
     val program: Int,
     val muted: Boolean,
+    val solo: Boolean,
     val notes: Int,
     val fontId: String,
     val category: String,
@@ -26,6 +27,8 @@ data class LoopTrackView(
 data class LoopView(
     val bpm: Int,
     val bars: Int,
+    val beatsPerBar: Int,
+    val beatUnit: Int,
     val metronome: Boolean,
     val playing: Boolean,
     val armed: Boolean,
@@ -50,18 +53,23 @@ class LoopController(context: Context) {
         var bank: Int, var program: Int, var muted: Boolean = false,
         var fontId: String = "gm",
         var category: String = "",
+        var solo: Boolean = false,
         val events: MutableList<Event> = mutableListOf()
     )
 
     private val prefs = context.applicationContext.getSharedPreferences("loop-session", Context.MODE_PRIVATE)
     private val tracks = mutableListOf<Track>()
     private val fontIndexes = mutableMapOf("gm" to 0)
+    private val fontTitles = mutableMapOf<String, String>()
     private val keysDown = mutableMapOf<Int, MutableSet<Int>>()
     private val scheduler = ScheduledThreadPoolExecutor(1) { command ->
         Thread(command, "LivePerformer-Loop").apply { priority = Thread.MAX_PRIORITY - 1 }
     }
     private var bpm = 120
     private var bars = 2
+    private var beatsPerBar = 4
+    private var beatUnit = 4
+    private var hasUnsavedChanges = true
     private var metronome = true
     private var selectedId = 1
     private var nextId = 3
@@ -91,6 +99,8 @@ class LoopController(context: Context) {
     private fun installDemo() {
         bpm = 120
         bars = 2
+        beatsPerBar = 4
+        beatUnit = 4
         metronome = true
         nextId = 6
         selectedId = 5
@@ -163,6 +173,11 @@ class LoopController(context: Context) {
         }
         val settingsOnly = root.optString("type") == "settings"
         val newBars = root.optInt("bars", 2).coerceIn(1, 8)
+        val newNumerator = root.optInt("beatsPerBar", 4)
+        val newDenominator = root.optInt("beatUnit", 4)
+        require((newNumerator to newDenominator) in setOf(
+            2 to 4, 3 to 4, 4 to 4, 6 to 8
+        )) { "不支援的拍號" }
         val newTracks = mutableListOf<Track>()
         val occupied = mutableSetOf<Int>()
         val saved = root.getJSONArray("tracks")
@@ -177,7 +192,7 @@ class LoopController(context: Context) {
                 obj.optBoolean("muted"), obj.optString("fontId", "gm").ifBlank { "gm" },
                 obj.optString("category", "").ifBlank {
                     if (channel == 9) "鼓組" else GmCategories.names[GmCategories.family(obj.optInt("program"))]
-                })
+                }, obj.optBoolean("solo", false))
             if (!settingsOnly) {
                 val notes = obj.optJSONArray("events") ?: JSONArray()
                 require(notes.length() <= 100000) { "MIDI 音符數量過多" }
@@ -187,7 +202,7 @@ class LoopController(context: Context) {
                     val time = e.getInt(0)
                     val note = e.getInt(2)
                     if (type in NativeEngine.NOTE_ON..NativeEngine.NOTE_OFF
-                        && time in 0 until LoopMath.loopTicks(newBars)
+                        && time in 0 until LoopMath.loopTicks(newBars, newNumerator, newDenominator)
                         && note in 0..127) {
                         track.events += Event(time, type, note, e.getInt(3).coerceIn(0, 127))
                     }
@@ -211,6 +226,8 @@ class LoopController(context: Context) {
             clockNs = System.nanoTime()
         }
         bars = newBars
+        beatsPerBar = newNumerator
+        beatUnit = newDenominator
         bpm = root.optInt("bpm", 120).coerceIn(40, 240)
         metronome = root.optBoolean("metronome", true)
         selectedId = root.optInt("selectedId", newTracks.first().id)
@@ -221,6 +238,7 @@ class LoopController(context: Context) {
         if (importing) {
             refreshPrograms()
             changed()
+            hasUnsavedChanges = false
         }
         return true
     }
@@ -232,10 +250,18 @@ class LoopController(context: Context) {
     @Synchronized fun exportDocument(settingsOnly: Boolean): String =
         serialize(settingsOnly, true).toString()
 
+    @Synchronized fun needsSaveBeforeReplace(): Boolean = hasUnsavedChanges
+
+    @Synchronized fun markSavedIfUnchanged(exportedContent: String) {
+        if (exportDocument(false) == exportedContent) hasUnsavedChanges = false
+    }
+
 
     private fun serialize(settingsOnly: Boolean, fileFormat: Boolean): JSONObject {
         val root = JSONObject()
-            .put("bpm", bpm).put("bars", bars).put("metronome", metronome)
+            .put("bpm", bpm).put("bars", bars)
+            .put("beatsPerBar", beatsPerBar).put("beatUnit", beatUnit)
+            .put("metronome", metronome)
             .put("selectedId", selectedId).put("nextId", nextId)
         if (fileFormat) {
             root.put("format", "liveperformer.v1")
@@ -245,7 +271,8 @@ class LoopController(context: Context) {
         for (t in tracks) {
             val obj = JSONObject().put("id", t.id).put("channel", t.channel)
                 .put("name", t.name).put("bank", t.bank).put("program", t.program)
-                .put("muted", t.muted).put("fontId", t.fontId).put("category", t.category)
+                .put("muted", t.muted).put("solo", t.solo)
+                .put("fontId", t.fontId).put("category", t.category)
             if (!settingsOnly) {
                 val events = JSONArray()
                 t.events.forEach { e ->
@@ -292,14 +319,14 @@ class LoopController(context: Context) {
     }
 
     @Synchronized private fun snapshot(): LoopView {
-        val length = LoopMath.loopTicks(bars)
+        val length = LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
         val at = ((absoluteTick.toLong() % length + length) % length).toInt()
-        return LoopView(bpm, bars, metronome, playing, armedTrack != null,
-            recordingTrack != null, selectedId, at / (4 * LoopMath.PPQ) + 1,
-            (at / LoopMath.PPQ) % 4 + 1, at.toFloat() / length,
+        return LoopView(bpm, bars, beatsPerBar, beatUnit, metronome, playing, armedTrack != null,
+            recordingTrack != null, selectedId, at / LoopMath.barTicks(beatsPerBar, beatUnit) + 1,
+            (at / LoopMath.beatTicks(beatUnit)) % beatsPerBar + 1, at.toFloat() / length,
             keysDown[tracks.firstOrNull { it.id == selectedId }?.channel]?.toSet() ?: emptySet(),
             tracks.map {
-                LoopTrackView(it.id, it.name, it.channel, it.bank, it.program, it.muted,
+                LoopTrackView(it.id, it.name, it.channel, it.bank, it.program, it.muted, it.solo,
                     it.events.count { event -> event.type == NativeEngine.NOTE_ON },
                     it.fontId, it.category.ifBlank {
                         if (it.channel == 9) "鼓組" else GmCategories.names[GmCategories.family(it.program)]
@@ -312,6 +339,7 @@ class LoopController(context: Context) {
         lastPublishNs = System.nanoTime()
     }
     private fun changed() {
+        hasUnsavedChanges = true
         dirty = true
         publish()
         // Save is coalesced by the scheduler to avoid a disk write per slider tick.
@@ -330,7 +358,7 @@ class LoopController(context: Context) {
         if (id != null) {
             val track = tracks.firstOrNull { it.id == id }
             if (track != null) {
-                val length = LoopMath.loopTicks(bars)
+                val length = LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
                 val finalTick = LoopMath.recordedTick(at, recordStart, length)
                 heldRecordingNotes.forEach { note ->
                     track.events += Event(finalTick, NativeEngine.NOTE_OFF, note, 0)
@@ -338,6 +366,7 @@ class LoopController(context: Context) {
                 track.events.sortBy { it.tick }
             }
             dirty = true
+            hasUnsavedChanges = true
         }
         heldRecordingNotes.clear()
         recordingTrack = null
@@ -356,8 +385,8 @@ class LoopController(context: Context) {
             armedTrack = null
             heldRecordingNotes.clear()
         }
-        if (recordingTrack != null && absoluteTick >= recordStart + LoopMath.loopTicks(bars))
-            stopRecord(recordStart + LoopMath.loopTicks(bars) - 1)
+        if (recordingTrack != null && absoluteTick >= recordStart + LoopMath.loopTicks(bars, beatsPerBar, beatUnit))
+            stopRecord(recordStart + LoopMath.loopTicks(bars, beatsPerBar, beatUnit) - 1)
     }
 
     @Synchronized private fun tick() {
@@ -365,8 +394,9 @@ class LoopController(context: Context) {
         advance(now)
         updateRecording()
         if (playing) {
-            val length = LoopMath.loopTicks(bars)
-            for (track in tracks) if (!track.muted) for (e in track.events) {
+            val length = LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
+            val anySolo = tracks.any { it.solo }
+            for (track in tracks) if (!track.muted && (!anySolo || track.solo)) for (e in track.events) {
                 val occurrence = LoopMath.nextOccurrence(lastScheduled, e.tick, length)
                 if (occurrence <= absoluteTick && occurrence > absoluteTick - length) {
                     NativeEngine.midi(e.type, track.channel, e.note, e.velocity)
@@ -374,15 +404,15 @@ class LoopController(context: Context) {
                 }
             }
             if (metronome) {
-                val beat = LoopMath.PPQ
+                val beat = LoopMath.beatTicks(beatUnit)
                 val start = (floor(lastScheduled / beat) + 1) * beat
                 if (start <= absoluteTick) {
                     val number = (start / beat).toLong()
-                    NativeEngine.noteOn(if (number % 4L == 0L) 76 else 77, 82, 9)
+                    NativeEngine.noteOn(if (number % beatsPerBar == 0L) 76 else 77, 82, 9)
                 }
                 val clickOff = (floor((lastScheduled - 96) / beat) + 1) * beat + 96
                 if (clickOff <= absoluteTick)
-                    NativeEngine.noteOff(if ((clickOff / beat).toLong() % 4L == 0L) 76 else 77, 9)
+                    NativeEngine.noteOff(if ((clickOff / beat).toLong() % beatsPerBar == 0L) 76 else 77, 9)
             }
             lastScheduled = absoluteTick
         }
@@ -418,7 +448,7 @@ class LoopController(context: Context) {
             playing = true
             clockNs = System.nanoTime()
             armedAt = 0.0
-        } else armedAt = LoopMath.nextBoundary(absoluteTick, LoopMath.loopTicks(bars))
+        } else armedAt = LoopMath.nextBoundary(absoluteTick, LoopMath.loopTicks(bars, beatsPerBar, beatUnit))
         armedTrack = selectedId
         updateRecording()
         publish()
@@ -439,15 +469,17 @@ class LoopController(context: Context) {
         updateRecording()
         if (type == NativeEngine.NOTE_ON || type == NativeEngine.NOTE_OFF) {
             if (recordingTrack == selected.id) {
-                val relative = LoopMath.recordedTick(absoluteTick, recordStart, LoopMath.loopTicks(bars))
+                val relative = LoopMath.recordedTick(absoluteTick, recordStart, LoopMath.loopTicks(bars, beatsPerBar, beatUnit))
                 selected.events += Event(relative, type, a.coerceIn(0, 127), b.coerceIn(0, 127))
                 if (type == NativeEngine.NOTE_ON) heldRecordingNotes += a
                 else heldRecordingNotes -= a
                 dirty = true
+                hasUnsavedChanges = true
             }
         }
         displayKey(selected.channel, type, a)
-        NativeEngine.midi(type, selected.channel, a, b)
+        if (!selected.muted && (tracks.none { it.solo } || selected.solo))
+            NativeEngine.midi(type, selected.channel, a, b)
         if (type == NativeEngine.NOTE_ON || type == NativeEngine.NOTE_OFF) publish()
     }
 
@@ -459,6 +491,17 @@ class LoopController(context: Context) {
     @Synchronized fun setBars(value: Int) {
         if (recordingTrack != null || armedTrack != null) stopRecord(absoluteTick)
         bars = value.coerceIn(1, 8)
+        absoluteTick = 0.0
+        lastScheduled = -0.01
+        NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
+        changed()
+    }
+    @Synchronized fun setMeter(numerator: Int, denominator: Int) {
+        require((numerator to denominator) in setOf(2 to 4, 3 to 4, 4 to 4, 6 to 8))
+        if (beatsPerBar == numerator && beatUnit == denominator) return
+        if (recordingTrack != null || armedTrack != null) stopRecord(absoluteTick)
+        beatsPerBar = numerator
+        beatUnit = denominator
         absoluteTick = 0.0
         lastScheduled = -0.01
         NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
@@ -487,6 +530,51 @@ class LoopController(context: Context) {
         changed()
         return true
     }
+    @Synchronized fun addChosenTrack(
+        fontId: String, bank: Int, program: Int, category: String, presetName: String
+    ): Boolean {
+        val drums = category == "鼓組"
+        val used = tracks.map { it.channel }.toSet()
+        val channel = (if (drums) listOf(9) else (0..15).filter { it != 9 })
+            .firstOrNull { it !in used } ?: return false
+        val id = nextId++
+        val normalized = InstrumentNaming.clean(presetName).ifBlank { category }
+        val track = Track(id, channel, normalized,
+            if (drums) 128 else bank, program.coerceIn(0, 127),
+            fontId = fontId.takeIf { it in fontIndexes } ?: "gm",
+            category = category)
+        tracks += track
+        selectedId = id
+        NativeEngine.selectFontPreset(channel, fontIndexes[track.fontId] ?: 0, track.bank, track.program)
+        changed()
+        return true
+    }
+
+    @Synchronized fun moveTrack(id: Int, direction: Int) {
+        val from = tracks.indexOfFirst { it.id == id }
+        if (from < 0 || direction == 0) return
+        val to = (from + (if (direction > 0) 1 else -1)).coerceIn(0, tracks.lastIndex)
+        if (from == to) return
+        val track = tracks.removeAt(from)
+        tracks.add(to, track)
+        changed()
+    }
+
+    @Synchronized fun toggleSolo(id: Int) {
+        val track = tracks.firstOrNull { it.id == id } ?: return
+        track.solo = !track.solo
+        silenceInaudibleTracks()
+        changed()
+    }
+
+    private fun silenceInaudibleTracks() {
+        val anySolo = tracks.any { it.solo }
+        tracks.filter { it.muted || (anySolo && !it.solo) }.forEach {
+            NativeEngine.midi(NativeEngine.CONTROLLER, it.channel, 123, 0)
+            keysDown.remove(it.channel)
+        }
+    }
+
     @Synchronized fun removeTrack(id: Int) {
         if (tracks.size <= 1) return
         val track = tracks.firstOrNull { it.id == id } ?: return
@@ -494,21 +582,24 @@ class LoopController(context: Context) {
         NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 123, 0)
         keysDown.remove(track.channel)
         tracks.remove(track)
+        silenceInaudibleTracks()
         if (selectedId == id) selectedId = tracks.first().id
         changed()
     }
     @Synchronized fun muteTrack(id: Int) {
         val track = tracks.firstOrNull { it.id == id } ?: return
         track.muted = !track.muted
-        if (track.muted) NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 123, 0)
+        silenceInaudibleTracks()
         changed()
     }
     @Synchronized fun setPreset(bank: Int, program: Int) {
         val track = tracks.firstOrNull { it.id == selectedId } ?: return
         track.bank = bank
         track.program = program
-        if (track.fontId == "gm" && track.channel != 9)
+        if (track.fontId == "gm" && track.channel != 9) {
             track.category = GmCategories.names[GmCategories.family(program)]
+            track.name = GmPrograms.names[program.coerceIn(0, 127)]
+        }
         NativeEngine.selectFontPreset(track.channel, fontIndexes[track.fontId] ?: 0, bank, program)
         changed()
     }
@@ -519,10 +610,37 @@ class LoopController(context: Context) {
         changed()
     }
 
+    @Synchronized fun setInstrument(
+        fontId: String, bank: Int, program: Int, presetName: String, category: String
+    ) {
+        val track = tracks.firstOrNull { it.id == selectedId } ?: return
+        if (fontId !in fontIndexes) return
+        track.fontId = fontId
+        track.bank = if (track.channel == 9) 128 else bank
+        track.program = program.coerceIn(0, 127)
+        track.name = InstrumentNaming.clean(presetName).ifBlank { category }
+        track.category = if (track.channel == 9) "鼓組" else category
+        NativeEngine.selectFontPreset(track.channel, fontIndexes[fontId] ?: 0, track.bank, track.program)
+        changed()
+    }
+
+    private fun recoverInstrumentName(track: Track): Boolean {
+        if (track.fontId == "gm") return false
+        val source = fontTitles[track.fontId] ?: return false
+        val old = track.name.trim()
+        val generic = old.matches(Regex("(instrument|preset|樂器|鋼琴)( *[0-9]+)?",
+            RegexOption.IGNORE_CASE)) || old == "未命名樂器"
+        if (!generic) return false
+        track.name = source
+        track.category = InstrumentNaming.category(source, track.program, "Instrument")
+        return true
+    }
+
     @Synchronized fun setFont(fontId: String) {
         val t = tracks.firstOrNull { it.id == selectedId } ?: return
         if (!fontIndexes.containsKey(fontId)) return
         t.fontId = fontId
+        recoverInstrumentName(t)
         NativeEngine.selectFontPreset(t.channel, fontIndexes[fontId] ?: 0, t.bank, t.program)
         changed()
     }
@@ -534,9 +652,14 @@ class LoopController(context: Context) {
 
     @Synchronized fun configureFonts(items: List<SoundFontItem>) {
         fontIndexes.clear()
-        items.forEachIndexed { index, font -> fontIndexes[font.id] = index }
+        fontTitles.clear()
+        items.forEachIndexed { index, font ->
+            fontIndexes[font.id] = index
+            fontTitles[font.id] = font.title
+        }
+        val repaired = tracks.map { recoverInstrumentName(it) }.any { it }
         refreshPrograms()
-        publish()
+        if (repaired) changed() else publish()
     }
     @Synchronized fun refreshPrograms() {
         for (t in tracks) {

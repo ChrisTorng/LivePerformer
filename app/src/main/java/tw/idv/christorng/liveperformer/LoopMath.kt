@@ -6,7 +6,13 @@ import kotlin.math.floor
 object LoopMath {
     const val PPQ = 960
 
-    fun loopTicks(bars: Int): Int = bars.coerceIn(1, 8) * 4 * PPQ
+    fun beatTicks(denominator: Int): Int = PPQ * 4 / denominator
+
+    fun barTicks(numerator: Int, denominator: Int): Int =
+        numerator * beatTicks(denominator)
+
+    fun loopTicks(bars: Int, numerator: Int = 4, denominator: Int = 4): Int =
+        bars.coerceIn(1, 8) * barTicks(numerator, denominator)
 
     fun nextBoundary(position: Double, length: Int): Double {
         val cycle = floor(position / length)
