@@ -578,9 +578,6 @@ private fun PerformerScreen() {
             OutlinedButton(enabled = !loading, onClick = {
                 picker.launch(arrayOf("*/*"))
             }) { Text("匯入 SF2 / ZIP / XZ") }
-            OutlinedButton(onClick = {
-                showInstrumentPicker = true
-            }) { Text("目前音軌選樂器") }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
                     baseNote = (baseNote - 12).coerceAtLeast(0)
