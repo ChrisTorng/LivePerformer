@@ -74,18 +74,7 @@ fun SoundFontPicker(
         title = { Text(if (track == null) "新增樂器軌" else "選擇樂器 · ${track.name}") },
         text = {
             Column {
-                Text("1. 音色庫", style = MaterialTheme.typography.labelMedium)
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                    fonts.forEach { font ->
-                        FilterChip(
-                            selected = sourceId == font.id,
-                            onClick = { sourceId = font.id },
-                            label = { Text(font.title, maxLines = 1) },
-                            modifier = Modifier.padding(end = 5.dp)
-                        )
-                    }
-                }
-                Text("2. 樂器類別", style = MaterialTheme.typography.labelMedium)
+                Text("1. 樂器類別", style = MaterialTheme.typography.labelMedium)
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                     if (track == null || track.channel == 9) {
                         FilterChip(selected = drums, onClick = { drums = true },
@@ -97,6 +86,17 @@ fun SoundFontPicker(
                                 onClick = { drums = false; family = index },
                                 label = { Text(name) }, modifier = Modifier.padding(end = 5.dp))
                         }
+                    }
+                }
+                Text("2. 音色庫", style = MaterialTheme.typography.labelMedium)
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                    fonts.forEach { font ->
+                        FilterChip(
+                            selected = sourceId == font.id,
+                            onClick = { sourceId = font.id },
+                            label = { Text(font.title, maxLines = 1) },
+                            modifier = Modifier.padding(end = 5.dp)
+                        )
                     }
                 }
                 Text("3. 選擇樂器", style = MaterialTheme.typography.labelMedium)
