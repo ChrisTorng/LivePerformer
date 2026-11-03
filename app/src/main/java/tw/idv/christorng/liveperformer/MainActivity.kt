@@ -481,6 +481,12 @@ private fun PerformerScreen() {
                 }
                 selectedFontId = fontId
             },
+            onDelete = if (addingInstrument) null else ({
+                selectedTrack?.let { track ->
+                    if (track.notes == 0) looper.removeTrack(track.id)
+                    else pendingTrackRemoval = track.id
+                }
+            }),
             onClose = { showInstrumentPicker = false }
         )
     }
