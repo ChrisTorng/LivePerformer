@@ -365,6 +365,7 @@ class LoopController(context: Context) {
                 track.events.sortBy { it.tick }
             }
             dirty = true
+            hasUnsavedChanges = true
         }
         heldRecordingNotes.clear()
         recordingTrack = null
@@ -472,6 +473,7 @@ class LoopController(context: Context) {
                 if (type == NativeEngine.NOTE_ON) heldRecordingNotes += a
                 else heldRecordingNotes -= a
                 dirty = true
+                hasUnsavedChanges = true
             }
         }
         displayKey(selected.channel, type, a)
