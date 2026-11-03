@@ -430,7 +430,7 @@ class LoopController(context: Context) {
             // Replace, never overdub. Keep the previous recording through an empty pass.
             track.events.clear()
             heldRecordingNotes.clear()
-            NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 123, 0)
+            // Do not cut off a live note that began just before the downbeat.
             takeHasNotes = true
         }
         if (!takeHasNotes) return
