@@ -124,7 +124,7 @@ fun PerformancePanel(
             Spacer(Modifier.weight(1f))
             Text("LivePerformer", fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Image(painter = painterResource(R.mipmap.ic_launcher),
+            Image(painter = painterResource(R.drawable.ic_launcher_foreground),
                 contentDescription = "LivePerformer",
                 modifier = Modifier.size(32.dp))
         }
