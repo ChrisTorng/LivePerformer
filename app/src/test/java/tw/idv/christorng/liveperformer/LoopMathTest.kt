@@ -7,6 +7,14 @@ class LoopMathTest {
     @Test fun defaultsAreTwoBars() {
         assertEquals(7680, LoopMath.loopTicks(2))
     }
+    @Test fun commonMetersHaveCorrectCycleLength() {
+        assertEquals(3840, LoopMath.loopTicks(2, 2, 4))
+        assertEquals(5760, LoopMath.loopTicks(2, 3, 4))
+        assertEquals(7680, LoopMath.loopTicks(2, 4, 4))
+        assertEquals(5760, LoopMath.loopTicks(2, 6, 8))
+        assertEquals(480, LoopMath.beatTicks(8))
+        assertEquals(960, LoopMath.beatTicks(4))
+    }
     @Test fun quantizeRecordingToNextCycle() {
         assertEquals(7680.0, LoopMath.nextBoundary(1.0, 7680), 0.001)
         assertEquals(0.0, LoopMath.nextBoundary(0.0, 7680), 0.001)
