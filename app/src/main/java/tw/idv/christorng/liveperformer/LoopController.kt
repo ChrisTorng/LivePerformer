@@ -613,27 +613,24 @@ class LoopController(context: Context) {
         }
     }
 
-    @Synchronized fun setBars(value: Int) {
-        if (recordingTrack != null || armedTrack != null) stopRecord(absoluteTick)
-        bars = value.coerceIn(1, 8)
-        trimBeyondLoop()
-        absoluteTick = 0.0
-        lastScheduled = -0.01
-        NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
-        changed()
-    }
-    @Synchronized fun setMeter(numerator: Int, denominator: Int) {
+    /** Apply meter and bar count together so only the final length determines truncation. */
+    @Synchronized fun setStructure(newBars: Int, numerator: Int, denominator: Int) {
         require((numerator to denominator) in setOf(2 to 4, 3 to 4, 4 to 4, 6 to 8))
-        if (beatsPerBar == numerator && beatUnit == denominator) return
+        if (newBars == bars && beatsPerBar == numerator && beatUnit == denominator) return
         if (recordingTrack != null || armedTrack != null) stopRecord(absoluteTick)
+        bars = newBars.coerceIn(1, 8)
         beatsPerBar = numerator
         beatUnit = denominator
         trimBeyondLoop()
         absoluteTick = 0.0
         lastScheduled = -0.01
+        clockNs = System.nanoTime()
         NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
         changed()
     }
+    @Synchronized fun setBars(value: Int) = setStructure(value, beatsPerBar, beatUnit)
+    @Synchronized fun setMeter(numerator: Int, denominator: Int) =
+        setStructure(bars, numerator, denominator)
     @Synchronized fun setMetronome(value: Boolean) {
         metronome = value
         changed()
