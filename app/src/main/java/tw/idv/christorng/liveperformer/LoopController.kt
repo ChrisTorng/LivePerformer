@@ -643,7 +643,8 @@ class LoopController(context: Context) {
     }
     @Synchronized fun addTrack(drums: Boolean = false): Boolean {
         val used = tracks.map { it.channel }.toSet()
-        val channel = (if (drums) listOf(9) else (0..15).filter { it != 9 })
+        val channel = (if (drums) listOf(9) + (0..15).filter { it != 9 }
+            else (0..15).filter { it != 9 })
             .firstOrNull { it !in used } ?: return false
         val id = nextId++
         tracks += Track(id, channel, if (drums) "鼓組 $id" else "樂器 $id",
@@ -659,7 +660,8 @@ class LoopController(context: Context) {
     ): Boolean {
         val drums = category == "鼓組"
         val used = tracks.map { it.channel }.toSet()
-        val channel = (if (drums) listOf(9) else (0..15).filter { it != 9 })
+        val channel = (if (drums) listOf(9) + (0..15).filter { it != 9 }
+            else (0..15).filter { it != 9 })
             .firstOrNull { it !in used } ?: return false
         val id = nextId++
         val normalized = InstrumentNaming.clean(presetName).ifBlank { category }
@@ -701,14 +703,13 @@ class LoopController(context: Context) {
     }
 
     @Synchronized fun removeTrack(id: Int) {
-        if (tracks.size <= 1) return
         val track = tracks.firstOrNull { it.id == id } ?: return
         if (recordingTrack == id || armedTrack == id) stopRecord(absoluteTick)
         NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 123, 0)
         keysDown.remove(track.channel)
         tracks.remove(track)
         silenceInaudibleTracks()
-        if (selectedId == id) selectedId = tracks.first().id
+        if (selectedId == id) selectedId = tracks.firstOrNull()?.id ?: 0
         changed()
     }
     @Synchronized fun muteTrack(id: Int) {
@@ -742,10 +743,10 @@ class LoopController(context: Context) {
         val track = tracks.firstOrNull { it.id == selectedId } ?: return
         if (fontId !in fontIndexes) return
         track.fontId = fontId
-        track.bank = if (track.channel == 9) 128 else bank
+        track.bank = bank
         track.program = program.coerceIn(0, 127)
         track.name = InstrumentNaming.clean(presetName).ifBlank { category }
-        track.category = if (track.channel == 9) "鼓組" else category
+        track.category = category
         NativeEngine.selectFontPreset(track.channel, fontIndexes[fontId] ?: 0, track.bank, track.program)
         changed()
     }
@@ -791,7 +792,7 @@ class LoopController(context: Context) {
         for (t in tracks) {
             NativeEngine.selectFontPreset(
                 t.channel, fontIndexes[t.fontId] ?: 0,
-                if (t.channel == 9) 128 else t.bank, t.program
+                t.bank, t.program
             )
         }
     }
