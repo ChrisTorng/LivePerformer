@@ -1,6 +1,7 @@
 package tw.idv.christorng.liveperformer
 
 import android.os.Bundle
+import android.view.WindowManager
 import android.os.Handler
 import android.os.Looper
 import android.media.AudioDeviceCallback
@@ -51,6 +52,8 @@ import java.io.File
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A performer can play without touching the display for minutes at a time.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // Android 15 enforces edge-to-edge; Compose applies the safe insets explicitly.
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
@@ -116,6 +119,7 @@ private fun PerformerScreen() {
     val settings = remember(context) { context.getSharedPreferences("performer", Context.MODE_PRIVATE) }
     val audioManager = remember(context) { context.getSystemService(AudioManager::class.java) }
     val looper = remember(context) { LoopController(context) }
+    val projectStorage = remember(context) { ProjectStorage(context) }
     val loopState by looper.state.collectAsState()
     val keyboard = remember(context, looper) {
         PianoKeyboardView(context).apply { sendMidi = looper::onMidi }
@@ -144,6 +148,16 @@ private fun PerformerScreen() {
     var showInstrumentPicker by remember { mutableStateOf(false) }
     var showBarsMenu by remember { mutableStateOf(false) }
     var showDemoConfirmation by remember { mutableStateOf(false) }
+    var showNewChoices by remember { mutableStateOf(false) }
+    var showProjectLibrary by remember { mutableStateOf(false) }
+    var projectLibraryVersion by remember { mutableIntStateOf(0) }
+    var showSaveDialog by remember { mutableStateOf(false) }
+    var saveName by remember { mutableStateOf(ProjectStorage.suggestedName()) }
+    var saveAsTemplate by remember { mutableStateOf(false) }
+    var pendingStructure by remember { mutableStateOf<Triple<Int, Int, Int>?>(null) }
+    var pendingTrackClear by remember { mutableStateOf<Int?>(null) }
+    var renameTrackId by remember { mutableStateOf<Int?>(null) }
+    var renameValue by remember { mutableStateOf("") }
     var openTrackMenu by remember { mutableStateOf<Int?>(null) }
     var deleteCandidate by remember { mutableStateOf<SoundFontItem?>(null) }
     var loading by remember { mutableStateOf(false) }
@@ -253,7 +267,7 @@ private fun PerformerScreen() {
     }
 
     val createJson = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json")
+        ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
         if (uri == null) {
             saveBeforeLoad = false
@@ -396,6 +410,121 @@ private fun PerformerScreen() {
     } ?: presets.getOrNull(presetIndex)
     var pendingTrackRemoval by remember { mutableStateOf<Int?>(null) }
 
+    pendingTrackClear?.let { id ->
+        val name = loopState.tracks.firstOrNull { it.id == id }?.name ?: "音軌"
+        AlertDialog(
+            onDismissRequest = { pendingTrackClear = null },
+            title = { Text("清除 $name 的錄製？") },
+            text = { Text("此操作會移除該軌所有已錄製音符，保留樂器與音軌設定。") },
+            confirmButton = { TextButton(onClick = {
+                looper.clearTrack(id)
+                pendingTrackClear = null
+            }) { Text("清除") } },
+            dismissButton = { TextButton(onClick = { pendingTrackClear = null }) { Text("取消") } }
+        )
+    }
+    renameTrackId?.let { id ->
+        AlertDialog(
+            onDismissRequest = { renameTrackId = null },
+            title = { Text("重新命名音軌") },
+            text = { OutlinedTextField(
+                value = renameValue, onValueChange = { renameValue = it },
+                singleLine = true, label = { Text("音軌名稱") }
+            ) },
+            confirmButton = { TextButton(onClick = {
+                looper.renameTrack(id, renameValue)
+                renameTrackId = null
+            }, enabled = renameValue.isNotBlank()) { Text("儲存") } },
+            dismissButton = { TextButton(onClick = { renameTrackId = null }) { Text("取消") } }
+        )
+    }
+    pendingStructure?.let { request ->
+        AlertDialog(
+            onDismissRequest = { pendingStructure = null },
+            title = { Text("部分音符會被刪除") },
+            text = { Text("縮短小節或變更拍號後，超出新循環範圍的 MIDI 音符將被移除。確定套用？") },
+            confirmButton = { TextButton(onClick = {
+                looper.setStructure(request.first, request.second, request.third)
+                pendingStructure = null
+            }) { Text("確認變更") } },
+            dismissButton = { TextButton(onClick = { pendingStructure = null }) { Text("取消") } }
+        )
+    }
+
+    if (showSaveDialog) {
+        AlertDialog(
+            onDismissRequest = { showSaveDialog = false; saveBeforeLoad = false },
+            title = { Text(if (saveAsTemplate) "儲存音軌範本" else "儲存專案") },
+            text = {
+                Column {
+                    OutlinedTextField(value = saveName, onValueChange = { saveName = it },
+                        singleLine = true, label = { Text("名稱") })
+                    Text("副檔名：" + if (saveAsTemplate) ".lvpt" else ".lvp",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = { TextButton(onClick = {
+                showSaveDialog = false
+                scope.launch {
+                    try {
+                        val content = looper.exportDocument(saveAsTemplate)
+                        val saved = withContext(Dispatchers.IO) {
+                            projectStorage.save(saveName, saveAsTemplate, content)
+                        }
+                        projectLibraryVersion++
+                        if (!saveAsTemplate) looper.markSavedIfUnchanged(content)
+                        message = "已儲存 ${saved.fileName}"
+                        if (saveBeforeLoad && !looper.needsSaveBeforeReplace()) {
+                            val resume = pendingLoadAction
+                            pendingLoadAction = null
+                            resume?.invoke()
+                        }
+                    } catch (e: Exception) { message = "儲存失敗：${e.message}" }
+                    finally { saveBeforeLoad = false }
+                }
+            }) { Text("儲存") } },
+            dismissButton = { TextButton(onClick = {
+                showSaveDialog = false
+                saveBeforeLoad = false
+            }) { Text("取消") } }
+        )
+    }
+    if (showProjectLibrary) {
+        val entries = remember(projectLibraryVersion) { projectStorage.list() }
+        AlertDialog(
+            onDismissRequest = { showProjectLibrary = false },
+            title = { Text("讀取專案／範本") },
+            text = {
+                if (entries.isEmpty()) Text("尚未儲存專案。")
+                else LazyColumn(Modifier.heightIn(max = 300.dp)) {
+                    items(entries, key = { it.fileName }) { entry ->
+                        TextButton(onClick = {
+                            showProjectLibrary = false
+                            guardedLoad {
+                                scope.launch {
+                                    try {
+                                        val json = withContext(Dispatchers.IO) {
+                                            projectStorage.read(entry)
+                                        }
+                                        looper.importDocument(json)
+                                        settingsPage = null
+                                        message = "已讀取 ${entry.fileName}"
+                                    } catch (e: Exception) {
+                                        message = "讀取失敗：${e.message}"
+                                    }
+                                }
+                            }
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text(entry.fileName, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showProjectLibrary = false }) {
+                Text("關閉")
+            } }
+        )
+    }
     pendingTrackRemoval?.let { trackId ->
         AlertDialog(
             onDismissRequest = { pendingTrackRemoval = null },
@@ -447,7 +576,9 @@ private fun PerformerScreen() {
                 TextButton(onClick = {
                     saveBeforeLoad = true
                     exportSettingsOnly = false
-                    createJson.launch("LivePerformer-project.json")
+                    saveName = ProjectStorage.suggestedName()
+                    saveAsTemplate = false
+                    showSaveDialog = true
                 }) { Text("先儲存再讀取") }
             },
             dismissButton = {
@@ -481,12 +612,6 @@ private fun PerformerScreen() {
                 }
                 selectedFontId = fontId
             },
-            onDelete = if (addingInstrument) null else ({
-                selectedTrack?.let { track ->
-                    if (track.notes == 0) looper.removeTrack(track.id)
-                    else pendingTrackRemoval = track.id
-                }
-            }),
             onClose = { showInstrumentPicker = false }
         )
     }
@@ -512,23 +637,40 @@ private fun PerformerScreen() {
                 Slider(loopState.bpm.toFloat(), { looper.setBpm(it.toInt()) },
                     modifier = Modifier.weight(1f), valueRange = 40f..240f)
             }
-            Row(verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("拍號")
+            Text("拍號")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf(2 to 4, 3 to 4, 4 to 4, 6 to 8).forEach { (beats, unit) ->
-                    FilterChip(selected = loopState.beatsPerBar == beats && loopState.beatUnit == unit,
-                        onClick = { looper.setMeter(beats, unit) },
-                        label = { Text("$beats/$unit") })
+                    FilterChip(
+                        selected = loopState.beatsPerBar == beats && loopState.beatUnit == unit,
+                        onClick = {
+                            if (looper.wouldTruncate(loopState.bars, beats, unit))
+                                pendingStructure = Triple(loopState.bars, beats, unit)
+                            else looper.setStructure(loopState.bars, beats, unit)
+                        }, label = { Text("$beats/$unit") }
+                    )
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("循環小節")
-                listOf(1, 2, 4, 8).forEach { bars ->
-                    FilterChip(selected = loopState.bars == bars,
-                        onClick = { looper.setBars(bars) }, label = { Text("$bars") })
+            Text("循環小節")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(1, 2, 4, 8).forEach { count ->
+                    FilterChip(selected = loopState.bars == count,
+                        onClick = {
+                            if (looper.wouldTruncate(count, loopState.beatsPerBar, loopState.beatUnit))
+                                pendingStructure = Triple(count, loopState.beatsPerBar, loopState.beatUnit)
+                            else looper.setStructure(count, loopState.beatsPerBar, loopState.beatUnit)
+                        }, label = { Text("$count") })
                 }
             }
+            Text("錄製量化（Quantization）", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                LoopMath.supportedQuantization.forEach { division ->
+                    FilterChip(selected = loopState.quantizeDivision == division,
+                        onClick = { looper.setQuantization(division) },
+                        label = { Text("1/$division") })
+                }
+            }
+            Text("錄製時，音符吸附至最近的格線；進入下一輪前半格的提前按鍵也會保留。",
+                style = MaterialTheme.typography.bodySmall)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("節拍器")
                 Switch(checked = loopState.metronome, onCheckedChange = looper::setMetronome)
@@ -536,33 +678,59 @@ private fun PerformerScreen() {
             HorizontalDivider()
             Text("專案", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedButton(onClick = {
-                    exportSettingsOnly = false
-                    createJson.launch("LivePerformer-project.json")
-                }) { Text("存專案") }
                 Box {
-                    OutlinedButton(onClick = { showLoadChoices = true }) { Text("讀取專案 / 預設") }
-                    DropdownMenu(expanded = showLoadChoices,
-                        onDismissRequest = { showLoadChoices = false }) {
-                        DropdownMenuItem(text = { Text("讀取已儲存專案") },
-                            onClick = {
-                                showLoadChoices = false
-                                guardedLoad {
-                                    openJson.launch(arrayOf("application/json", "text/plain", "*/*"))
-                                }
-                            })
-                        DropdownMenuItem(text = { Text("載入內建示範專案") },
-                            onClick = {
-                                showLoadChoices = false
-                                guardedLoad { looper.loadDemo(); settingsPage = null }
-                            })
+                    OutlinedButton(onClick = { showNewChoices = true }) { Text("新專案") }
+                    DropdownMenu(expanded = showNewChoices,
+                        onDismissRequest = { showNewChoices = false }) {
+                        DropdownMenuItem(text = { Text("全空白（無樂器軌）") }, onClick = {
+                            showNewChoices = false
+                            guardedLoad { looper.newProject(false); settingsPage = null }
+                        })
+                        DropdownMenuItem(text = { Text("預設空軌（五種樂器）") }, onClick = {
+                            showNewChoices = false
+                            guardedLoad { looper.newProject(true); settingsPage = null }
+                        })
                     }
                 }
                 OutlinedButton(onClick = {
-                    exportSettingsOnly = true
-                    createJson.launch("LivePerformer-settings.json")
-                }) { Text("存音軌範本") }
+                    saveName = ProjectStorage.suggestedName()
+                    saveAsTemplate = false
+                    showSaveDialog = true
+                }) { Text("儲存") }
+                Box {
+                    OutlinedButton(onClick = { showLoadChoices = true }) { Text("讀取") }
+                    DropdownMenu(expanded = showLoadChoices,
+                        onDismissRequest = { showLoadChoices = false }) {
+                        DropdownMenuItem(text = { Text("已儲存的專案／範本") }, onClick = {
+                            showLoadChoices = false
+                            projectLibraryVersion++
+                            showProjectLibrary = true
+                        })
+                        DropdownMenuItem(text = { Text("從外部檔案匯入") }, onClick = {
+                            showLoadChoices = false
+                            guardedLoad {
+                                openJson.launch(arrayOf("application/octet-stream",
+                                    "application/json", "*/*"))
+                            }
+                        })
+                        DropdownMenuItem(text = { Text("內建示範（含錄製內容）") }, onClick = {
+                            showLoadChoices = false
+                            guardedLoad { looper.loadDemo(); settingsPage = null }
+                        })
+                    }
+                }
+                OutlinedButton(onClick = {
+                    saveName = ProjectStorage.suggestedName()
+                    saveAsTemplate = true
+                    showSaveDialog = true
+                }) { Text("存軌範本") }
             }
+            OutlinedButton(onClick = {
+                exportSettingsOnly = false
+                createJson.launch(ProjectStorage.suggestedName() + ProjectStorage.PROJECT_EXTENSION)
+            }) { Text("匯出 .lvp 至外部位置") }
+            Text("儲存與讀取只列出 .lvp 專案及 .lvpt 音軌範本；兩者內部仍為 JSON。",
+                style = MaterialTheme.typography.bodySmall)
             Text("音軌編輯、樂器選擇及排序在演奏畫面操作。", style = MaterialTheme.typography.bodySmall)
             } else {
             Text("音色庫", style = MaterialTheme.typography.titleMedium)
@@ -688,10 +856,11 @@ private fun PerformerScreen() {
                     addingInstrument = true
                     showInstrumentPicker = true
                 },
-                onDelete = { id ->
-                    val track = loopState.tracks.firstOrNull { it.id == id }
-                    if (track?.notes == 0) looper.removeTrack(id)
-                    else pendingTrackRemoval = id
+                onDelete = { id -> pendingTrackRemoval = id },
+                onClear = { id -> pendingTrackClear = id },
+                onRename = { id ->
+                    renameTrackId = id
+                    renameValue = loopState.tracks.firstOrNull { it.id == id }?.name.orEmpty()
                 }
             )
         }

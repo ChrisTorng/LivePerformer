@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.4.0' in workflow and 'versionCode = 9' in gradle
+assert 'v0.4.1' in workflow and 'versionCode = 10' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -64,7 +64,7 @@ midi=(root/'app/src/main/java/tw/idv/christorng/liveperformer/MidiInput.kt').rea
 panel=(root/'app/src/main/java/tw/idv/christorng/liveperformer/PerformancePanel.kt').read_text()
 for required in ('LoopController(context)', 'looper::onMidi', 'PerformancePanel(', 'settingsPage = SettingsPage.PROJECT', 'NativeEngine.loadFontCollection'):
     assert required in activity, required
-for required in ('looper.recordPause()', 'looper.playPause()', 'onAddTrack', 'looper.clearSelected()', 'looper.setMetronome', 'looper.toggleSolo'):
+for required in ('looper.recordPause()', 'looper.playStop()', 'onAddTrack', 'onClear', 'looper.setMetronome', 'looper.toggleSolo'):
     assert required in panel, required
 for required in ('ScheduledThreadPoolExecutor', 'nextOccurrence', 'recordStart', 'SharedPreferences', 'loop-session'):
     if required == 'SharedPreferences': continue
@@ -77,7 +77,7 @@ print('PASS: multitrack MIDI loop UI, routing, persistence and timeline tests wi
 # The performance screen must never scroll with the keyboard.
 assert 'if (settingsPage != null)' in activity and 'PianoRoll(' in panel
 assert 'LazyColumn(' in panel and 'state.progress' in panel
-assert 'showInstrumentPicker' in activity and 'GmCategories.names' in (root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPicker.kt').read_text()
+assert 'showInstrumentPicker' in activity and 'availableCategories' in (root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPicker.kt').read_text()
 assert 'looper.loadDemo()' in activity
 assert 'android:icon="@mipmap/ic_launcher"' in manifest
 assert (root/'app/src/main/res/drawable/ic_launcher_foreground.xml').exists()

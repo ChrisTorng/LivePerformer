@@ -5,6 +5,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -15,6 +17,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -55,18 +61,39 @@ private fun SmallAction(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TransportButton(label: String, action: String, recording: Boolean = false, onClick: () -> Unit) {
-    val background = if (recording) Color(0xFFAA3434) else MaterialTheme.colorScheme.primary
-    Column(
-        modifier = Modifier.width(78.dp).height(56.dp)
+private fun TransportButton(symbol: String, description: String, recording: Boolean = false, onClick: () -> Unit) {
+    val background = if (recording) Color(0xFFAD3030) else MaterialTheme.colorScheme.primary
+    Box(
+        modifier = Modifier.size(width = 59.dp, height = 50.dp)
             .background(background, RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+        contentAlignment = Alignment.Center
     ) {
-        Text(label, color = Color.White, fontSize = 24.sp, lineHeight = 25.sp,
-            fontWeight = FontWeight.Bold)
-        Text(action, color = Color.White, fontSize = 11.sp)
+        Text(symbol, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun MetronomeToggle(enabled: Boolean, onClick: () -> Unit) {
+    val active = MaterialTheme.colorScheme.primary
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Box(Modifier.size(43.dp).clickable(onClick = onClick)
+        .background(if (enabled) active.copy(alpha = 0.2f)
+            else MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp)),
+        contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(26.dp)) {
+            val c = if (enabled) active else muted
+            val w = size.width
+            val h = size.height
+            val frame = Path().apply {
+                moveTo(w * .35f, h * .30f); lineTo(w * .65f, h * .30f)
+                lineTo(w * .83f, h * .88f); lineTo(w * .17f, h * .88f); close()
+            }
+            drawPath(frame, color = c, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+            drawLine(c, Offset(w * .54f, h * .70f), Offset(w * .75f, h * .10f),
+                strokeWidth = 2.dp.toPx())
+            drawCircle(c, radius = 2.dp.toPx(), center = Offset(w * .75f, h * .10f))
+        }
     }
 }
 
@@ -100,12 +127,14 @@ fun PerformancePanel(
     onSystemSettings: () -> Unit,
     onInstrument: () -> Unit,
     onAddTrack: () -> Unit,
-    onDelete: (Int) -> Unit
+    onDelete: (Int) -> Unit,
+    onClear: (Int) -> Unit,
+    onRename: (Int) -> Unit
 ) {
     val landscape = LocalConfiguration.current.orientation ==
         android.content.res.Configuration.ORIENTATION_LANDSCAPE
     var showVolume by remember { mutableStateOf(false) }
-    val labelWidth = if (landscape) 218.dp else 205.dp
+    val labelWidth = if (landscape) 172.dp else 174.dp
     val itemHeight = if (landscape) 59.dp else 64.dp
     val dragThreshold = with(LocalDensity.current) { (itemHeight + 3.dp).toPx() }
     val keyboardHeight = when (keyboardMode) {
@@ -113,40 +142,31 @@ fun PerformancePanel(
         KeyboardMode.MONITOR -> if (landscape) 32.dp else 38.dp
         KeyboardMode.PLAY -> if (landscape) 91.dp else 148.dp
     }
-    val groups = state.tracks.groupBy { it.category }
     val anySolo = state.tracks.any { it.solo }
     Column(Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 2.dp)) {
         // Project/system configuration are deliberately separate from stage controls.
         Row(Modifier.fillMaxWidth().height(39.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = onProjectSettings) { Text("專案設定") }
-            TextButton(onClick = onSystemSettings) { Text("系統設定") }
-            Spacer(Modifier.weight(1f))
-            Text("LivePerformer", fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
             Image(painter = painterResource(R.drawable.ic_launcher_foreground),
-                contentDescription = "LivePerformer",
-                modifier = Modifier.size(32.dp))
+                contentDescription = "LivePerformer", modifier = Modifier.size(31.dp))
+            Text("LivePerformer", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onProjectSettings) { Text("專案") }
+            TextButton(onClick = onSystemSettings) { Text("系統") }
         }
 
-        Row(Modifier.fillMaxWidth().height(64.dp),
+        Row(Modifier.fillMaxWidth().height(58.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            TransportButton(if (state.playing) "Ⅱ" else "▶",
-                if (state.playing) "暫停" else "播放") { looper.playPause() }
-            TransportButton(if (state.recording || state.armed) "■" else "●",
-                when { state.recording -> "停止錄製"
-                    state.armed -> "取消待錄"
-                    else -> "錄製" },
+            horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            TransportButton(if (state.playing) "■" else "▶",
+                if (state.playing) "停止" else "播放") { looper.playStop() }
+            TransportButton(if (state.recording || state.armed) "■" else "●", "錄製",
                 recording = true) { looper.recordPause() }
-            // Clear is intentionally distant from playback and record.
-            Spacer(Modifier.width(6.dp))
-            SmallAction("清除", { looper.clearSelected() })
-            SmallAction(if (state.metronome) "♩開" else "♩關",
-                { looper.setMetronome(!state.metronome) })
+            if (state.recording || state.armed)
+                Text(if (state.armed) "待錄" else "REC", color = Color(0xFFF87171), fontSize = 11.sp)
+            MetronomeToggle(state.metronome) { looper.setMetronome(!state.metronome) }
+            Text("${state.bpm} BPM", fontSize = 12.sp, maxLines = 1)
             Spacer(Modifier.weight(1f))
-            Text("${state.beatsPerBar}/${state.beatUnit} · ${state.bars} 小節 · ${state.bpm} BPM",
-                fontSize = 12.sp, maxLines = 1)
             Box {
                 SmallAction("音量", { showVolume = true })
                 DropdownMenu(expanded = showVolume, onDismissRequest = { showVolume = false }) {
@@ -159,40 +179,27 @@ fun PerformancePanel(
             }
         }
 
-        Row(Modifier.fillMaxWidth().height(19.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                when {
-                    state.recording -> "● REC"
-                    state.armed -> "● 待錄"
-                    else -> "音軌"
-                },
-                color = if (state.recording || state.armed) Color(0xFFFA6767)
-                    else MaterialTheme.colorScheme.onSurface,
-                fontSize = 11.sp, modifier = Modifier.width(labelWidth)
-            )
-            Row(Modifier.weight(1f).fillMaxHeight()) {
-                repeat(state.bars) { bar ->
-                    Box(Modifier.weight(1f)) {
-                        Text("${bar + 1}", fontSize = 11.sp,
-                            modifier = Modifier.align(Alignment.CenterStart))
-                    }
-                }
-            }
-        }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             LazyColumn(Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 items(state.tracks, key = { it.id }) { track ->
                     val isSelected = state.selectedId == track.id
-                    val categoryTracks = groups[track.category].orEmpty()
-                    val number = categoryTracks.indexOfFirst { it.id == track.id } + 1
-                    val groupName = if (categoryTracks.size > 1)
-                        "${track.category} $number" else track.category
                     val audible = !track.muted && (!anySolo || track.solo)
                     var dragPixels by remember(track.id) { mutableFloatStateOf(0f) }
-
-                    Row(Modifier.fillMaxWidth().height(itemHeight)) {
+                    var isDragging by remember(track.id) { mutableStateOf(false) }
+                    var showTrackMenu by remember(track.id) { mutableStateOf(false) }
+                    val floatingY by animateFloatAsState(
+                        targetValue = if (isDragging) dragPixels else 0f,
+                        animationSpec = tween(110), label = "track-float"
+                    )
+                    Row(Modifier.fillMaxWidth().height(itemHeight)
+                        .zIndex(if (isDragging) 10f else 0f)
+                        .graphicsLayer {
+                            translationY = floatingY
+                            scaleX = if (isDragging) 1.02f else 1f
+                            scaleY = if (isDragging) 1.04f else 1f
+                            shadowElevation = if (isDragging) 14.dp.toPx() else 0f
+                        }) {
                         Row(
                             Modifier.width(labelWidth).fillMaxHeight()
                                 .background(
@@ -205,9 +212,12 @@ fun PerformancePanel(
                                 Modifier.width(25.dp).fillMaxHeight()
                                     .pointerInput(track.id, dragThreshold) {
                                         detectDragGesturesAfterLongPress(
-                                            onDragStart = { dragPixels = 0f },
-                                            onDragEnd = { dragPixels = 0f },
-                                            onDragCancel = { dragPixels = 0f },
+                                            onDragStart = {
+                                                dragPixels = 0f
+                                                isDragging = true
+                                            },
+                                            onDragEnd = { isDragging = false; dragPixels = 0f },
+                                            onDragCancel = { isDragging = false; dragPixels = 0f },
                                             onDrag = { change, amount ->
                                                 change.consume()
                                                 dragPixels += amount.y
@@ -223,18 +233,35 @@ fun PerformancePanel(
                                     },
                                 contentAlignment = Alignment.Center
                             ) { Text("⠿", fontSize = 18.sp) }
-                            Column(Modifier.weight(1f).fillMaxHeight()
-                                .clickable {
-                                    if (isSelected) onInstrument()
+                            Box(Modifier.weight(1f).fillMaxHeight()) {
+                                Box(Modifier.fillMaxSize().clickable {
+                                    if (isSelected) showTrackMenu = true
                                     else looper.selectTrack(track.id)
-                                },
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Text(groupName, fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold, maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis)
-                                Text(track.name, fontSize = 10.sp, maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis)
+                                }, contentAlignment = Alignment.CenterStart) {
+                                    Text(track.name.ifBlank { track.category },
+                                        modifier = Modifier.padding(horizontal = 3.dp),
+                                        fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                DropdownMenu(expanded = showTrackMenu,
+                                    onDismissRequest = { showTrackMenu = false }) {
+                                    DropdownMenuItem(text = { Text("變更樂器") }, onClick = {
+                                        showTrackMenu = false
+                                        onInstrument()
+                                    })
+                                    DropdownMenuItem(text = { Text("重新命名") }, onClick = {
+                                        showTrackMenu = false
+                                        onRename(track.id)
+                                    })
+                                    DropdownMenuItem(text = { Text("清除錄製") }, onClick = {
+                                        showTrackMenu = false
+                                        onClear(track.id)
+                                    })
+                                    DropdownMenuItem(text = { Text("刪除音軌") }, onClick = {
+                                        showTrackMenu = false
+                                        onDelete(track.id)
+                                    })
+                                }
                             }
                             TrackToggle("M", track.muted, Color(0xFFAA3434)) {
                                 looper.muteTrack(track.id)
@@ -258,13 +285,9 @@ fun PerformancePanel(
                             .background(MaterialTheme.colorScheme.surfaceVariant,
                                 RoundedCornerShape(8.dp)),
                             contentAlignment = Alignment.Center) {
-                            Text("+ 新增樂器軌", fontWeight = FontWeight.Bold)
+                            Text("+", fontWeight = FontWeight.Bold, fontSize = 26.sp)
                         }
-                        Box(Modifier.weight(1f).fillMaxHeight(),
-                            contentAlignment = Alignment.CenterStart) {
-                            Text("選擇類別及樂器", fontSize = 12.sp,
-                                modifier = Modifier.padding(start = 12.dp))
-                        }
+                        Spacer(Modifier.weight(1f))
                     }
                 }
             }
