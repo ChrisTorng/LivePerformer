@@ -657,7 +657,7 @@ class LoopController(context: Context) {
             fontIndexes[font.id] = index
             fontTitles[font.id] = font.title
         }
-        val repaired = tracks.any { recoverInstrumentName(it) }
+        val repaired = tracks.map { recoverInstrumentName(it) }.any { it }
         refreshPrograms()
         if (repaired) changed() else publish()
     }
