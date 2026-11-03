@@ -550,7 +550,7 @@ class LoopController(context: Context) {
     @Synchronized fun moveTrack(id: Int, direction: Int) {
         val from = tracks.indexOfFirst { it.id == id }
         if (from < 0 || direction == 0) return
-        val to = (from + if (direction > 0) 1 else -1).coerceIn(0, tracks.lastIndex)
+        val to = (from + (if (direction > 0) 1 else -1)).coerceIn(0, tracks.lastIndex)
         if (from == to) return
         val track = tracks.removeAt(from)
         tracks.add(to, track)
