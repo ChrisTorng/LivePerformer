@@ -23,6 +23,7 @@ fun SoundFontPicker(
     fonts: List<SoundFontItem>,
     context: Context,
     onChoose: (String, Int, Int, String, String) -> Unit,
+    onDelete: (() -> Unit)? = null,
     onClose: () -> Unit
 ) {
     val prefs = remember(context) {
@@ -119,6 +120,11 @@ fun SoundFontPicker(
                 if (presets.isEmpty()) Text("此音色庫沒有屬於「$familyName」的樂器，可切換類別或音色庫。")
             }
         },
-        confirmButton = { TextButton(onClick = onClose) { Text("取消") } }
+        confirmButton = { TextButton(onClick = onClose) { Text("取消") } },
+        dismissButton = {
+            if (track != null && onDelete != null) {
+                TextButton(onClick = { onDelete(); onClose() }) { Text("刪除音軌") }
+            }
+        }
     )
 }
