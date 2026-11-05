@@ -239,7 +239,7 @@ class LoopController(context: Context) {
         val importedRoutes = mutableListOf<MidiRoute>()
         val routeArray = root.optJSONArray("midiRoutes") ?: JSONArray()
         require(routeArray.length() <= 64) { "MIDI 路由超過上限" }
-        val knownActions = setOf("note", "scale", "volume", "pan", "master", "select-track")
+        val knownActions = setOf("note", "scale", "custom", "volume", "pan", "master", "select-track")
         for (index in 0 until routeArray.length()) {
             val item = routeArray.getJSONObject(index)
             val kind = item.optString("kind", "note")
@@ -253,9 +253,17 @@ class LoopController(context: Context) {
                 ch in -1..15 && item.optString("deviceKey", "*").length <= 256) {
                 "MIDI 路由格式不正確"
             }
+            val mapArray = item.optJSONArray("noteMap") ?: JSONArray()
+            require(mapArray.length() <= 16 && (action != "custom" ||
+                mapArray.length() == last - first + 1)) { "自訂 MIDI 音符映射長度不符" }
+            val map = (0 until mapArray.length()).map { mapArray.getInt(it) }
+            require(map.all { it in -1..127 }) { "自訂 MIDI 音高無效" }
+            val scaleMode = item.optString("scaleMode", "major")
+            require(scaleMode in MidiPitch.modes) { "MIDI 調式無效" }
             importedRoutes += MidiRoute(item.optInt("id", index + 1),
                 item.optString("deviceKey", "*"), ch, kind, first, last,
-                trackId, action, item.optInt("noteBase", -1).coerceIn(-1, 127))
+                trackId, action, item.optInt("noteBase", -1).coerceIn(-1, 127),
+                scaleMode, map)
         }
         val saved = root.getJSONArray("tracks")
         require(saved.length() in 0..16) { "樂器軌數量不正確" }
@@ -363,7 +371,8 @@ class LoopController(context: Context) {
                 .put("channel", r.channel).put("kind", r.kind)
                 .put("first", r.first).put("last", r.last)
                 .put("trackId", r.trackId).put("action", r.action)
-                .put("noteBase", r.noteBase))
+                .put("noteBase", r.noteBase).put("scaleMode", r.scaleMode)
+                .put("noteMap", JSONArray(r.noteMap)))
         }
         root.put("midiRoutes", routes)
         val saved = JSONArray()
@@ -700,21 +709,41 @@ class LoopController(context: Context) {
         }
     }
 
-    @Synchronized fun addMidiRoute(
-        deviceKey: String, channel: Int, kind: String, first: Int, last: Int,
-        trackId: Int, action: String, noteBase: Int = -1
+    /** Atomic create/update: saving an edited pad bank never duplicates its old rule. */
+    @Synchronized fun putMidiRoute(
+        id: Int?, deviceKey: String, channel: Int, kind: String, first: Int, last: Int,
+        trackId: Int, action: String, noteBase: Int = -1,
+        scaleMode: String = "major", noteMap: List<Int> = emptyList()
     ): Boolean {
-        if (midiRoutes.size >= 48 || deviceKey.length > 256 || channel !in -1..15 ||
+        if ((id == null && midiRoutes.size >= 48) || (id != null && midiRoutes.none { it.id == id }) ||
+            deviceKey.length > 256 || channel !in -1..15 ||
             kind !in setOf("note", "cc", "program") ||
-            action !in setOf("note", "scale", "volume", "pan", "master", "select-track") ||
+            action !in setOf("note", "scale", "custom", "volume", "pan", "master", "select-track") ||
+            (kind == "program" && action != "select-track") ||
+            (kind != "program" && action == "select-track") ||
+            (action in setOf("volume", "pan", "master") && kind != "cc") ||
             first !in 0..127 || last !in first..127 ||
             (trackId != 0 && tracks.none { it.id == trackId }) ||
-            noteBase !in -1..127) return false
-        midiRoutes += MidiRoute(nextMidiRouteId++, deviceKey, channel, kind, first,
-            last, trackId, action, noteBase)
+            (trackId == 0) != (action == "master") ||
+            noteBase !in -1..127 || scaleMode !in MidiPitch.modes ||
+            (action == "scale" && noteBase < 0) ||
+            (action == "custom" && (last - first + 1 > 16 ||
+                noteMap.size != last - first + 1 || noteMap.any { it !in -1..127 })))
+            return false
+        val candidate = MidiRoute(id ?: nextMidiRouteId++, deviceKey, channel, kind,
+            first, last, trackId, action, noteBase, scaleMode,
+            if (action == "custom") noteMap.toList() else emptyList())
+        val oldIndex = midiRoutes.indexOfFirst { it.id == id }
+        if (oldIndex < 0) midiRoutes += candidate else midiRoutes[oldIndex] = candidate
         changed()
         return true
     }
+
+    @Synchronized fun addMidiRoute(
+        deviceKey: String, channel: Int, kind: String, first: Int, last: Int,
+        trackId: Int, action: String, noteBase: Int = -1
+    ): Boolean = putMidiRoute(null, deviceKey, channel, kind, first, last, trackId, action, noteBase)
+
 
     @Synchronized fun removeMidiRoute(id: Int) {
         if (midiRoutes.removeAll { it.id == id }) changed()
