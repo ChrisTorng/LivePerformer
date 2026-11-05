@@ -20,6 +20,7 @@ fun MidiRoutingSettings(
     devices: List<MidiDeviceView>,
     onMessage: (String) -> Unit
 ) {
+    var feedback by remember { mutableStateOf("") }
     var deviceKey by remember { mutableStateOf("*") }
     var channel by remember { mutableStateOf("2") }
     var kind by remember { mutableStateOf("note") }
@@ -57,8 +58,10 @@ fun MidiRoutingSettings(
             }
         }
         OutlinedButton(onClick = {
-            if (!looper.applyMpkMiniMk2Preset(deviceKey)) onMessage("請先建立鼓組及 Bass 音軌，或檢查路由上限")
-            else onMessage("已設定 Pad A → 鼓組、Pad B → Bass（Channel 2）")
+            feedback = if (!looper.applyMpkMiniMk2Preset(deviceKey))
+                "請先建立鼓組及 Bass 音軌，或檢查路由上限"
+            else "已設定 Pad A → 鼓組、Pad B → Bass（Channel 2）"
+            onMessage(feedback)
         }) { Text("套用 MPK mini MK2 Pad 範例") }
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -139,12 +142,14 @@ fun MidiRoutingSettings(
                 (action != "master" && targetTrack != 0)
             if (!valid || !looper.addMidiRoute(deviceKey, ch, kind, start, end,
                     targetTrack, action, base)) {
-                onMessage("MIDI 路由設定無效：請確認 Channel、範圍與目標音軌")
-            }
+                feedback = "MIDI 路由設定無效：請確認 Channel、範圍與目標音軌"
+            } else feedback = "已新增 MIDI 路由"
+            onMessage(feedback)
         }) { Text("新增路由") }
         Text("CC Pad 建議使用 Momentary；不相容的裝置可改用通用編號設定。",
             style = MaterialTheme.typography.bodySmall)
     }
+    if (feedback.isNotEmpty()) Text(feedback, style = MaterialTheme.typography.bodySmall)
     state.midiRoutes.forEach { route ->
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val dev = if (route.deviceKey == "*") "所有" else
