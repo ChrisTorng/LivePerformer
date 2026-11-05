@@ -293,6 +293,8 @@ class LoopController(context: Context) {
             newTracks += track
         }
         if (importing) {
+            clockSender?.invoke(0xfc)
+            lastClockIndex = -1L
             playing = false
             clockSender?.invoke(0xfc)
             NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
@@ -729,9 +731,16 @@ class LoopController(context: Context) {
             it.id != drums.id && (it.name.contains("Bass", true) ||
                 it.name.contains("貝斯") || it.category == "貝斯")
         } ?: return false
-        if (midiRoutes.size + 2 > 48) return false
-        addMidiRoute(deviceKey, 1, "note", 36, 43, drums.id, "note")
-        addMidiRoute(deviceKey, 1, "note", 44, 51, bass.id, "note")
+        val desired = listOf(Triple(36, 43, drums.id), Triple(44, 51, bass.id))
+        val missing = desired.filterNot { (first, last, trackId) ->
+            midiRoutes.any { it.deviceKey == deviceKey && it.channel == 1 &&
+                it.kind == "note" && it.first == first && it.last == last &&
+                it.trackId == trackId && it.action == "note" && it.noteBase == -1 }
+        }
+        if (midiRoutes.size + missing.size > 48) return false
+        missing.forEach { (first, last, trackId) ->
+            addMidiRoute(deviceKey, 1, "note", first, last, trackId, "note")
+        }
         return true
     }
 
