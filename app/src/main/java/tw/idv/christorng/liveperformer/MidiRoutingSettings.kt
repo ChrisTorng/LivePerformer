@@ -87,6 +87,12 @@ fun MidiRoutingSettings(
             else "請先建立鼓組與 Bass 音軌"
             onMessage(feedback)
         }) { Text("套用 MPK mini MK2 範例", maxLines = 1) }
+        OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = {
+            feedback = if (looper.applyMpkMiniMk2CcBassPreset(deviceKey))
+                "已設定 CC 20–27 → Bass C2 大調，可再按編輯改調性或逐鍵音高"
+            else "請先建立 Bass 音軌，或已有 CC 20–27 路由（請按編輯）"
+            onMessage(feedback)
+        }) { Text("CC 20–27 → Bass（C2 大調）", maxLines = 1) }
         HorizontalDivider()
         Text(if (editingId == null) "新增 MIDI 路由" else "編輯第 " + editingId + " 條路由",
             style = MaterialTheme.typography.titleMedium)
