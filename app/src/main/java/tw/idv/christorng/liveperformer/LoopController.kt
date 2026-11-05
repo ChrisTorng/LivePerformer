@@ -39,7 +39,8 @@ data class LoopView(
     val beat: Int,
     val progress: Float,
     val keyboardNotes: Set<Int>,
-    val tracks: List<LoopTrackView>
+    val tracks: List<LoopTrackView>,
+    val midiRoutes: List<MidiRoute>
 )
 
 /**
@@ -61,6 +62,14 @@ class LoopController(context: Context) {
 
     private val prefs = context.applicationContext.getSharedPreferences("loop-session", Context.MODE_PRIVATE)
     private val tracks = mutableListOf<Track>()
+    private val midiRoutes = mutableListOf<MidiRoute>()
+    private var nextMidiRouteId = 1
+    @Volatile private var clockSender: ((Int) -> Unit)? = null
+    @Volatile var masterVolumeFromMidi: ((Float) -> Unit)? = null
+    private var lastClockIndex = -1L
+
+    fun setClockSender(sender: ((Int) -> Unit)?) { clockSender = sender }
+
     private val fontIndexes = mutableMapOf("gm" to 0)
     private val fontTitles = mutableMapOf<String, String>()
     private val keysDown = mutableMapOf<Int, MutableSet<Int>>()
@@ -102,6 +111,8 @@ class LoopController(context: Context) {
 
     /** Two-bar C major -> A minor groove. The second bar has different drums and bass. */
     private fun installDemo() {
+        midiRoutes.clear()
+        nextMidiRouteId = 1
         bpm = 120
         bars = 2
         beatsPerBar = 4
@@ -173,6 +184,9 @@ class LoopController(context: Context) {
         lastScheduled = -0.01
         clockNs = System.nanoTime()
         tracks.clear()
+        midiRoutes.clear()
+        nextMidiRouteId = 1
+        clockSender?.invoke(0xfc)
         if (withTemplateTracks) {
             tracks += Track(1, 9, "鼓組", 128, 0, category = "鼓組")
             tracks += Track(2, 1, "貝斯", 0, 33, category = "貝斯")
@@ -198,6 +212,7 @@ class LoopController(context: Context) {
         absoluteTick = 0.0
         lastScheduled = -0.01
         clockNs = System.nanoTime()
+        clockSender?.invoke(0xfc)
         installDemo()
         refreshPrograms()
         changed()
@@ -221,6 +236,27 @@ class LoopController(context: Context) {
         )) { "不支援的拍號" }
         val newTracks = mutableListOf<Track>()
         val occupied = mutableSetOf<Int>()
+        val importedRoutes = mutableListOf<MidiRoute>()
+        val routeArray = root.optJSONArray("midiRoutes") ?: JSONArray()
+        require(routeArray.length() <= 64) { "MIDI 路由超過上限" }
+        val knownActions = setOf("note", "scale", "volume", "pan", "master", "select-track")
+        for (index in 0 until routeArray.length()) {
+            val item = routeArray.getJSONObject(index)
+            val kind = item.optString("kind", "note")
+            val action = item.optString("action", "note")
+            val first = item.optInt("first")
+            val last = item.optInt("last", 127)
+            val ch = item.optInt("channel", -1)
+            val trackId = item.optInt("trackId")
+            require(kind in setOf("note", "cc", "program") &&
+                action in knownActions && first in 0..127 && last in first..127 &&
+                ch in -1..15 && item.optString("deviceKey", "*").length <= 256) {
+                "MIDI 路由格式不正確"
+            }
+            importedRoutes += MidiRoute(item.optInt("id", index + 1),
+                item.optString("deviceKey", "*"), ch, kind, first, last,
+                trackId, action, item.optInt("noteBase", -1).coerceIn(-1, 127))
+        }
         val saved = root.getJSONArray("tracks")
         require(saved.length() in 0..16) { "樂器軌數量不正確" }
         for (i in 0 until saved.length()) {
@@ -258,6 +294,7 @@ class LoopController(context: Context) {
         }
         if (importing) {
             playing = false
+            clockSender?.invoke(0xfc)
             NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
             armedTrack = null
             recordingTrack = null
@@ -280,6 +317,10 @@ class LoopController(context: Context) {
         nextId = maxOf(root.optInt("nextId", 1), (newTracks.maxOfOrNull { it.id } ?: 0) + 1)
         tracks.clear()
         tracks.addAll(newTracks)
+        midiRoutes.clear()
+        midiRoutes.addAll(importedRoutes.filter { it.trackId == 0 ||
+            tracks.any { track -> track.id == it.trackId } })
+        nextMidiRouteId = (midiRoutes.maxOfOrNull { it.id } ?: 0) + 1
         if (tracks.none { it.id == selectedId }) selectedId = tracks.firstOrNull()?.id ?: 0
         if (importing) {
             refreshPrograms()
@@ -314,6 +355,15 @@ class LoopController(context: Context) {
             root.put("format", "liveperformer.v1")
             root.put("type", if (settingsOnly) "settings" else "project")
         }
+        val routes = JSONArray()
+        midiRoutes.forEach { r ->
+            routes.put(JSONObject().put("id", r.id).put("deviceKey", r.deviceKey)
+                .put("channel", r.channel).put("kind", r.kind)
+                .put("first", r.first).put("last", r.last)
+                .put("trackId", r.trackId).put("action", r.action)
+                .put("noteBase", r.noteBase))
+        }
+        root.put("midiRoutes", routes)
         val saved = JSONArray()
         for (t in tracks) {
             val obj = JSONObject().put("id", t.id).put("channel", t.channel)
@@ -378,7 +428,7 @@ class LoopController(context: Context) {
                     it.fontId, it.category.ifBlank {
                         if (it.channel == 9) "鼓組" else GmCategories.names[GmCategories.family(it.program)]
                     }, pianoNotes(it, length))
-            })
+            }, midiRoutes.toList())
     }
 
     private fun publish() {
@@ -480,6 +530,16 @@ class LoopController(context: Context) {
         advance(now)
         updateRecording()
         if (playing) {
+            // MIDI Clock: 24 pulses per quarter note. This is scheduler-timed (~4 ms),
+            // not hardware timestamped, and is not suitable for sample-accurate sync.
+            val currentClock = floor(absoluteTick / (LoopMath.PPQ / 24)).toLong()
+            if (clockSender != null) {
+                if (currentClock - lastClockIndex > 4) lastClockIndex = currentClock - 4
+                while (lastClockIndex < currentClock) {
+                    lastClockIndex++
+                    clockSender?.invoke(0xf8)
+                }
+            } else lastClockIndex = currentClock
             val length = LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
             val anySolo = tracks.any { it.solo }
             for (track in tracks) if (!track.muted && (!anySolo || track.solo) && !(recordingTrack == track.id && takeHasNotes)) for (e in track.events) {
@@ -515,7 +575,11 @@ class LoopController(context: Context) {
             playing = false
             NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
             keysDown.clear()
-        } else playing = true
+        } else {
+            playing = true
+            clockSender?.invoke(0xfa)
+        }
+        lastClockIndex = -1L
         absoluteTick = 0.0
         lastScheduled = -0.01
         clockNs = now
@@ -538,6 +602,8 @@ class LoopController(context: Context) {
             absoluteTick = 0.0
             lastScheduled = -0.01
             playing = true
+            lastClockIndex = -1L
+            clockSender?.invoke(0xfa)
             clockNs = System.nanoTime()
             armedAt = 0.0
         } else armedAt = LoopMath.nextBoundary(absoluteTick,
@@ -557,26 +623,116 @@ class LoopController(context: Context) {
         changed()
     }
 
+    /** Touch keyboard always plays the selected track. Physical MIDI takes independent routes. */
     @Synchronized fun onMidi(type: Int, originalChannel: Int, a: Int, b: Int) {
-        // Route physical MIDI and touch events to the selected instrument's channel.
         val selected = tracks.firstOrNull { it.id == selectedId } ?: return
+        dispatchToTrack(selected, type, a, b)
+    }
+
+    private fun dispatchToTrack(track: Track, type: Int, a: Int, b: Int) {
         advance(System.nanoTime())
         updateRecording()
         if (type == NativeEngine.NOTE_ON || type == NativeEngine.NOTE_OFF) {
             val note = a.coerceIn(0, 127)
             val velocity = b.coerceIn(0, 127)
-            if (recordingTrack == selected.id) {
-                capture(selected, type, note, velocity, absoluteTick)
-            } else if (armedTrack == selected.id &&
+            if (recordingTrack == track.id) {
+                capture(track, type, note, velocity, absoluteTick)
+            } else if (armedTrack == track.id &&
                 absoluteTick >= armedAt - LoopMath.preRollTicks(quantizeDivision) &&
                 absoluteTick < armedAt) {
                 preRollEvents += Captured(absoluteTick, type, note, velocity)
             }
         }
-        displayKey(selected.channel, type, a)
-        if (!selected.muted && (tracks.none { it.solo } || selected.solo))
-            NativeEngine.midi(type, selected.channel, a, b)
+        displayKey(track.channel, type, a)
+        if (!track.muted && (tracks.none { it.solo } || track.solo))
+            NativeEngine.midi(type, track.channel, a, b)
         if (type == NativeEngine.NOTE_ON || type == NativeEngine.NOTE_OFF) publish()
+    }
+
+    /** Physical source channel is independent from the synth's assigned track channel. */
+    @Synchronized fun onExternalMidi(event: MidiEvent) {
+        val routes = midiRoutes.filter { it.matches(event) }
+        if (routes.isNotEmpty()) {
+            for (route in routes) {
+                val track = tracks.firstOrNull { it.id == route.trackId }
+                when (route.action) {
+                    "note", "scale" -> if (track != null) {
+                        val result = route.noteFor(event) ?: continue
+                        dispatchToTrack(track, if (result.second > 0)
+                            NativeEngine.NOTE_ON else NativeEngine.NOTE_OFF,
+                            result.first, result.second)
+                    }
+                    "volume", "pan" -> if (track != null) {
+                        NativeEngine.midi(NativeEngine.CONTROLLER, track.channel,
+                            if (route.action == "volume") 7 else 10, event.data2)
+                    }
+                    "master" -> masterVolumeFromMidi?.invoke(
+                        0.1f + event.data2.coerceIn(0, 127) / 127f * 1.4f)
+                    "select-track" -> if (track != null && event.kind == 0xc0)
+                        selectTrack(track.id)
+                }
+            }
+            return
+        }
+        // Preserve the original keyboard behaviour until a route is configured.
+        // A partially mapped pad bank must not leak into the currently selected instrument.
+        val isMappedGroup = midiRoutes.any {
+            (it.deviceKey == "*" || it.deviceKey == event.deviceKey) &&
+                (it.channel == -1 || it.channel == event.channel) &&
+                ((it.kind == "note" && event.kind in setOf(0x80, 0x90)) ||
+                 (it.kind == "cc" && event.kind == 0xb0))
+        }
+        if (isMappedGroup && event.channel != 0) return
+        val selected = tracks.firstOrNull { it.id == selectedId } ?: return
+        when (event.kind) {
+            0x80 -> dispatchToTrack(selected, NativeEngine.NOTE_OFF, event.data1, event.data2)
+            0x90 -> dispatchToTrack(selected,
+                if (event.data2 == 0) NativeEngine.NOTE_OFF else NativeEngine.NOTE_ON,
+                event.data1, event.data2)
+            0xb0 -> if (event.channel == 0 || midiRoutes.isEmpty())
+                dispatchToTrack(selected, NativeEngine.CONTROLLER, event.data1, event.data2)
+            0xe0 -> dispatchToTrack(selected, NativeEngine.PITCH_BEND, 0,
+                event.data1 or (event.data2 shl 7))
+            // Program Change is diagnostic-only by default: it must not silently
+            // overwrite the SoundFont preset chosen by the project.
+        }
+    }
+
+    @Synchronized fun addMidiRoute(
+        deviceKey: String, channel: Int, kind: String, first: Int, last: Int,
+        trackId: Int, action: String, noteBase: Int = -1
+    ): Boolean {
+        if (midiRoutes.size >= 48 || deviceKey.length > 256 || channel !in -1..15 ||
+            kind !in setOf("note", "cc", "program") ||
+            action !in setOf("note", "scale", "volume", "pan", "master", "select-track") ||
+            first !in 0..127 || last !in first..127 ||
+            (trackId != 0 && tracks.none { it.id == trackId }) ||
+            noteBase !in -1..127) return false
+        midiRoutes += MidiRoute(nextMidiRouteId++, deviceKey, channel, kind, first,
+            last, trackId, action, noteBase)
+        changed()
+        return true
+    }
+
+    @Synchronized fun removeMidiRoute(id: Int) {
+        if (midiRoutes.removeAll { it.id == id }) changed()
+    }
+
+    @Synchronized fun clearMidiRoutes() {
+        if (midiRoutes.isNotEmpty()) { midiRoutes.clear(); changed() }
+    }
+
+    /** Matches the pad-note numbers shown in the user's MPK mini MK2 Editor screenshot. */
+    @Synchronized fun applyMpkMiniMk2Preset(deviceKey: String): Boolean {
+        val drums = tracks.firstOrNull { it.category == "鼓組" || it.bank == 128 } ?: return false
+        val bass = tracks.firstOrNull {
+            it.id != drums.id && (it.name.contains("Bass", true) ||
+                it.name.contains("貝斯") || it.category == "貝斯")
+        } ?: return false
+        if (midiRoutes.size + 2 > 48) return false
+        addMidiRoute(deviceKey, 1, "note", 36, 43, drums.id, "note")
+        addMidiRoute(deviceKey, 1, "note", 44, 51, bass.id, "note")
+        return true
     }
 
     @Synchronized fun setBpm(value: Int) {
@@ -708,6 +864,7 @@ class LoopController(context: Context) {
         NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 123, 0)
         keysDown.remove(track.channel)
         tracks.remove(track)
+        midiRoutes.removeAll { it.trackId == id }
         silenceInaudibleTracks()
         if (selectedId == id) selectedId = tracks.firstOrNull()?.id ?: 0
         changed()
