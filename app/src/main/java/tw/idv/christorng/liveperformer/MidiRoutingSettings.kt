@@ -235,7 +235,7 @@ fun MidiRoutingSettings(
             val ch = channel.toIntOrNull()?.minus(1) ?: -100
             val start = first.toIntOrNull() ?: -1
             val end = last.toIntOrNull() ?: -1
-            val pitch = if (action == "scale") (octave + 1) * 12 + key
+            val pitch = if (action == "scale" || action == "custom") (octave + 1) * 12 + key
                 else noteBase.toIntOrNull() ?: -2
             val customMap = if (action == "custom") custom.map { it.toIntOrNull() ?: -2 }
                 else emptyList()
