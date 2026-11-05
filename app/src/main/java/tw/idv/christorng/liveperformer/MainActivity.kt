@@ -899,6 +899,7 @@ private fun PerformerScreen() {
                     settings.edit().putFloat("gain", it).apply()
                 },
                 onProjectSettings = { settingsPage = SettingsPage.PROJECT },
+                onMidiSettings = { settingsPage = SettingsPage.MIDI },
                 onSystemSettings = { settingsPage = SettingsPage.SYSTEM },
                 onInstrument = {
                     addingInstrument = false
