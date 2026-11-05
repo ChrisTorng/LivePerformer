@@ -93,6 +93,12 @@ fun MidiRoutingSettings(
             else "請先建立 Bass 音軌，或已有 CC 20–27 路由（請按編輯）"
             onMessage(feedback)
         }) { Text("CC 20–27 → Bass（C2 大調）", maxLines = 1) }
+        OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = {
+            feedback = if (looper.applyMpkMiniMk2StagePreset(deviceKey))
+                "已套用 CC Bank B：28–31 各軌 Mute，32–35 播放、錄製、節拍器及下一軌"
+            else "需先有鼓組、Bass、弦樂、Lead，或 CC 28–35 已有對應規則"
+            onMessage(feedback)
+        }) { Text("套用 CC Bank B 舞台控制", maxLines = 1) }
         HorizontalDivider()
         Text(if (editingId == null) "新增 MIDI 路由" else "編輯第 " + editingId + " 條路由",
             style = MaterialTheme.typography.titleMedium)
@@ -145,13 +151,23 @@ fun MidiRoutingSettings(
             "program" -> listOf("select-track" to "切換音軌")
             "cc" -> listOf("note" to "CC → 指定首音（半音）",
                 "scale" to "CC → 調性音階", "custom" to "CC → 逐鍵指定",
-                "volume" to "音軌音量", "pan" to "左右平衡", "master" to "總音量")
+                "volume" to "音軌音量", "pan" to "左右平衡", "master" to "總音量",
+                "mute" to "指定軌 Mute（Toggle）",
+                "solo" to "指定軌 Solo（Toggle）",
+                "play-stop" to "播放／停止（Momentary）",
+                "record-toggle" to "錄製／結束（Momentary）",
+                "metronome-toggle" to "節拍器切換（Momentary）",
+                "next-track" to "選取下一軌（Momentary）")
             else -> listOf("note" to "原始／半音音高",
                 "scale" to "調性音階", "custom" to "逐鍵指定")
         }
         MidiChoice(actions.firstOrNull { it.first == action }?.second ?: "選擇動作",
             actions, { selected ->
                 action = selected
+                if (selected in setOf("play-stop", "record-toggle",
+                        "metronome-toggle", "next-track", "master")) targetTrack = 0
+                else if (targetTrack == 0) targetTrack =
+                    state.selectedId.takeIf { it != 0 } ?: state.tracks.firstOrNull()?.id ?: 0
                 if (selected == "custom" && custom.size != makeScale().size) {
                     custom.clear()
                     custom.addAll(makeScale())
@@ -259,6 +275,7 @@ fun MidiRoutingSettings(
                 modifier = Modifier.fillMaxWidth()) { Text("取消編輯") }
         }
         if (feedback.isNotBlank()) Text(feedback, style = MaterialTheme.typography.bodySmall)
+        Text("Bank B 建議：Pad 1–4 設 Toggle 控制 Mute，Pad 5–8 設 Momentary 控制播放、錄製、節拍器與下一軌。Toggle 依 CC 127／0 設定開關狀態，切換專案後控制器狀態未必同步。", style = MaterialTheme.typography.bodySmall)
         Text("CC 20 是控制器編號，不是音高。若用 CC Pad 彈奏，請在硬體使用 Momentary 模式：按下 127、放開 0。",
             style = MaterialTheme.typography.bodySmall)
         HorizontalDivider()
