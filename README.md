@@ -73,3 +73,14 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - Settings → 存專案 / 讀取 / 存設定. Project files contain MIDI clips; settings files do not, and reading settings preserves matching track clips.
 - SoundFonts are device-local. Import matching SF2 files before opening a project that references them.
 - Android soft scheduler remains best effort and requires real-device latency testing.
+
+
+## v0.4.2 experimental multi-device MIDI routing
+
+- System -> MIDI device/diagnostics lists multiple MIDI devices and five newest inbound events including source, channel, note/CC/program/pitch bend. Clock (0xF8) and Active Sensing (0xFE) are excluded to avoid drowning out test data.
+- Project -> MIDI routing stores up to 48 device/channel/kind/number-range/target/action rules under the `midiRoutes` JSON field. Note or momentary CC pads can play different tracks, optionally transposed or mapped to an eight-step major scale.
+- The MPK mini MK2 shortcut uses the supplied Editor screenshot: channel 2, Note 36-43 to existing drum track, Note 44-51 to existing Bass track. Source keyboards default to playing the selected track; extra CC mappings can be manually added.
+- Explicit CC rules may control track volume CC7, track pan CC10, or master FluidSynth gain; Program Change is diagnostic-only unless mapped to select-track.
+- MIDI output Clock is selectable under System and sends Start/Stop and MIDI Clock at 24 PPQN from the existing 4-ms scheduler. MPK mini MK2 must use Editor Clock External and Send To RAM for ARP external synchronization; clock timing is best-effort, not sample-accurate.
+- Existing projects without `midiRoutes` remain supported. MIDI output ID is not persisted across reconnect. Two identical devices without distinguishable serial numbers share a mapping identity.
+- Limitations: only one armed track records at a time; simultaneous live multi-track notes do not automatically record every played track. No MIDI Learn, custom drum map, minor scale, Windows GUI or physical device verification yet.
