@@ -249,6 +249,11 @@ fun PerformancePanel(
                                         showTrackMenu = false
                                         onInstrument()
                                     })
+                                    DropdownMenuItem(text = { Text("MIDI 控制設定") }, onClick = {
+                                        showTrackMenu = false
+                                        looper.selectTrack(track.id)
+                                        onProjectSettings()
+                                    })
                                     DropdownMenuItem(text = { Text("重新命名") }, onClick = {
                                         showTrackMenu = false
                                         onRename(track.id)
