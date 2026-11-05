@@ -108,7 +108,7 @@ private fun audioOutputName(device: AudioDeviceInfo): String {
     return "$type · ${device.productName}（ID ${device.id}）"
 }
 
-private enum class SettingsPage { PROJECT, SYSTEM }
+private enum class SettingsPage { PROJECT, MIDI, SYSTEM }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -595,7 +595,9 @@ private fun PerformerScreen() {
     }
 
 
-    BackHandler(enabled = settingsPage != null) { settingsPage = null }
+    BackHandler(enabled = settingsPage != null) {
+        settingsPage = if (settingsPage == SettingsPage.MIDI) SettingsPage.PROJECT else null
+    }
 
     pendingLoadAction?.let {
         AlertDialog(
@@ -655,9 +657,14 @@ private fun PerformerScreen() {
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { settingsPage = null }) { Text("‹ 演奏") }
-                Text(if (settingsPage == SettingsPage.PROJECT) "專案設定" else "系統設定",
-                    style = MaterialTheme.typography.titleLarge)
+                TextButton(onClick = {
+                    settingsPage = if (settingsPage == SettingsPage.MIDI) SettingsPage.PROJECT else null
+                }) { Text(if (settingsPage == SettingsPage.MIDI) "‹ 專案" else "‹ 演奏") }
+                Text(when (settingsPage) {
+                    SettingsPage.PROJECT -> "專案設定"
+                    SettingsPage.MIDI -> "MIDI 路由"
+                    else -> "系統設定"
+                }, style = MaterialTheme.typography.titleLarge)
             }
             if (settingsPage == SettingsPage.PROJECT) {
             Text("速度 / 拍號 / 循環小節", style = MaterialTheme.typography.titleMedium)
@@ -707,7 +714,9 @@ private fun PerformerScreen() {
             }
             HorizontalDivider()
             Text("專案", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box {
                     OutlinedButton(onClick = { showNewChoices = true }) { Text("新專案") }
                     DropdownMenu(expanded = showNewChoices,
@@ -762,7 +771,15 @@ private fun PerformerScreen() {
             Text("儲存與讀取只列出 .lvp 專案及 .lvpt 音軌範本；兩者內部仍為 JSON。",
                 style = MaterialTheme.typography.bodySmall)
             Text("音軌編輯、樂器選擇及排序在演奏畫面操作。", style = MaterialTheme.typography.bodySmall)
-            MidiRoutingSettings(loopState, looper, midiDevices, onMessage = { message = it })
+            HorizontalDivider()
+            Text("MIDI 路由", style = MaterialTheme.typography.titleMedium)
+            Text("目前有 " + loopState.midiRoutes.size +
+                " 條固定路由。可設定 Pad／CC 控制其他音軌，並指定音階與逐鍵對應。",
+                style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = { settingsPage = SettingsPage.MIDI },
+                modifier = Modifier.fillMaxWidth()) { Text("設定 MIDI 路由") }
+            } else if (settingsPage == SettingsPage.MIDI) {
+                MidiRoutingSettings(loopState, looper, midiDevices, onMessage = { message = it })
             } else {
             MidiSystemPanel(midiDevices, midiLog, midiClockTarget, onClockTarget = { id ->
                 midiClockTarget = id
