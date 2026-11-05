@@ -84,3 +84,12 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - MIDI output Clock is selectable under System and sends Start/Stop and MIDI Clock at 24 PPQN from the existing 4-ms scheduler. MPK mini MK2 must use Editor Clock External and Send To RAM for ARP external synchronization; clock timing is best-effort, not sample-accurate.
 - Existing projects without `midiRoutes` remain supported. MIDI output ID is not persisted across reconnect. Two identical devices without distinguishable serial numbers share a mapping identity.
 - Limitations: only one armed track records at a time; simultaneous live multi-track notes do not automatically record every played track. No MIDI Learn, custom drum map, minor scale, Windows GUI or physical device verification yet.
+
+## v0.4.3: Mobile MIDI mapping refinement (feature branch)
+
+- Narrow portrait screen: project buttons wrap, MIDI route editor occupies a separate settings page. Back returns to Project settings, then Performance.
+- CC numbers (e.g. 20-27) are controller identifiers, not notes. Routes convert them to playable pitches without reprogramming the hardware.
+- Per-route 12-key major/natural-minor scale with octave, or custom per-note mapping (maximum 16 notes, -1 disables a pad). Custom mappings and scale mode persist in .lvp/.lvpt JSON alongside the existing route fields.
+- Existing projects without noteMap and scaleMode still import.
+- Route editing replaces the old rule in place. Real Android MIDI hardware and portrait layouts still need device validation.
+- NOTE: PR branch builds may be downloaded as GitHub Actions artifacts. The main-release workflow is still configured for the v0.4.2 release tag until its publishing configuration can be updated.
