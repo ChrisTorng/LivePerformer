@@ -773,6 +773,21 @@ class LoopController(context: Context) {
         return true
     }
 
+    /** One-tap example: MPK mini MK2 CC Pad A (20..27) plays C2 major on Bass. */
+    @Synchronized fun applyMpkMiniMk2CcBassPreset(deviceKey: String): Boolean {
+        val bass = tracks.firstOrNull {
+            it.name.contains("Bass", true) || it.name.contains("貝斯") ||
+                it.category == "貝斯"
+        } ?: return false
+        if (midiRoutes.any {
+            (it.deviceKey == deviceKey || it.deviceKey == "*") &&
+                it.channel == 1 && it.kind == "cc" &&
+                it.first <= 27 && it.last >= 20
+        }) return false // Do not silently override an already-customized CC bank.
+        return putMidiRoute(null, deviceKey, 1, "cc", 20, 27,
+            bass.id, "scale", 36, "major")
+    }
+
     @Synchronized fun setBpm(value: Int) {
         advance(System.nanoTime())
         bpm = value.coerceIn(40, 240)
