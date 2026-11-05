@@ -45,4 +45,25 @@ class MidiRoutingTest {
             Triple(0x91, 37, 0), Triple(0x81, 36, 0)
         ), messages)
     }
+
+    @Test fun naturalMinorAndMajorSupportSelectableKeys() {
+        assertEquals(listOf(36, 38, 40, 41, 43, 45, 47, 48),
+            (0..7).map { MidiPitch.scale(36, it, "major") })
+        assertEquals(listOf(36, 38, 39, 41, 43, 44, 46, 48),
+            (0..7).map { MidiPitch.scale(36, it, "minor") })
+        val gMajorCc = MidiRoute(6, "mpk", 1, "cc", 20, 27, 2, "scale", 43)
+        assertEquals(43 to 100, gMajorCc.noteFor(message(0xb1, 20, 127)))
+        assertEquals(55 to 100, gMajorCc.noteFor(message(0xb1, 27, 127)))
+        assertEquals(43 to 0, gMajorCc.noteFor(message(0xb1, 20, 0)))
+    }
+
+    @Test fun customPadMapOverridesCcNumberAndCanDisableIndividualPad() {
+        val custom = MidiRoute(7, "mpk", 1, "cc", 20, 27, 2, "custom",
+            noteMap = listOf(36, 38, 40, 41, 43, 45, 47, -1))
+        assertEquals(36 to 100, custom.noteFor(message(0xb1, 20, 127)))
+        assertEquals(47 to 0, custom.noteFor(message(0xb1, 26, 0)))
+        assertNull(custom.noteFor(message(0xb1, 27, 127)))
+        assertFalse(custom.matches(message(0xb0, 20, 127)))
+        assertEquals("C2", MidiPitch.name(36))
+    }
 }
