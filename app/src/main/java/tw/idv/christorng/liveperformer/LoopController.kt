@@ -239,7 +239,8 @@ class LoopController(context: Context) {
         val importedRoutes = mutableListOf<MidiRoute>()
         val routeArray = root.optJSONArray("midiRoutes") ?: JSONArray()
         require(routeArray.length() <= 64) { "MIDI 路由超過上限" }
-        val knownActions = setOf("note", "scale", "custom", "volume", "pan", "master", "select-track")
+        val knownActions = setOf("note", "scale", "custom", "volume", "pan", "master", "select-track",
+            "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track")
         for (index in 0 until routeArray.length()) {
             val item = routeArray.getJSONObject(index)
             val kind = item.optString("kind", "note")
@@ -667,7 +668,7 @@ class LoopController(context: Context) {
             for (route in routes) {
                 val track = tracks.firstOrNull { it.id == route.trackId }
                 when (route.action) {
-                    "note", "scale" -> if (track != null) {
+                    "note", "scale", "custom" -> if (track != null) {
                         val result = route.noteFor(event) ?: continue
                         dispatchToTrack(track, if (result.second > 0)
                             NativeEngine.NOTE_ON else NativeEngine.NOTE_OFF,
@@ -679,6 +680,21 @@ class LoopController(context: Context) {
                     }
                     "master" -> masterVolumeFromMidi?.invoke(
                         0.1f + event.data2.coerceIn(0, 127) / 127f * 1.4f)
+                    // Toggle CC sends alternating >=64 / <64. Set the requested state
+                    // rather than blindly toggling on every received message.
+                    "mute" -> if (track != null && event.kind == 0xb0)
+                        setTrackMuted(track.id, event.data2 >= 64)
+                    "solo" -> if (track != null && event.kind == 0xb0)
+                        setTrackSolo(track.id, event.data2 >= 64)
+                    // Momentary CC: act on press only, never on its release.
+                    "play-stop" -> if (event.kind == 0xb0 && event.data2 >= 64) playStop()
+                    "record-toggle" -> if (event.kind == 0xb0 && event.data2 >= 64) recordPause()
+                    "metronome-toggle" -> if (event.kind == 0xb0 && event.data2 >= 64)
+                        setMetronome(!metronome)
+                    "next-track" -> if (event.kind == 0xb0 && event.data2 >= 64 && tracks.isNotEmpty()) {
+                        val current = tracks.indexOfFirst { it.id == selectedId }
+                        selectTrack(tracks[(current + 1) % tracks.size].id)
+                    }
                     "select-track" -> if (track != null && event.kind == 0xc0)
                         selectTrack(track.id)
                 }
@@ -718,13 +734,16 @@ class LoopController(context: Context) {
         if ((id == null && midiRoutes.size >= 48) || (id != null && midiRoutes.none { it.id == id }) ||
             deviceKey.length > 256 || channel !in -1..15 ||
             kind !in setOf("note", "cc", "program") ||
-            action !in setOf("note", "scale", "custom", "volume", "pan", "master", "select-track") ||
+            action !in setOf("note", "scale", "custom", "volume", "pan", "master", "select-track",
+                "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track") ||
             (kind == "program" && action != "select-track") ||
             (kind != "program" && action == "select-track") ||
-            (action in setOf("volume", "pan", "master") && kind != "cc") ||
+            (action in setOf("volume", "pan", "master", "mute", "solo",
+                "play-stop", "record-toggle", "metronome-toggle", "next-track") && kind != "cc") ||
             first !in 0..127 || last !in first..127 ||
             (trackId != 0 && tracks.none { it.id == trackId }) ||
-            (trackId == 0) != (action == "master") ||
+            (trackId == 0) != (action in setOf("master", "play-stop", "record-toggle",
+                "metronome-toggle", "next-track")) ||
             noteBase !in -1..127 || scaleMode !in MidiPitch.modes ||
             (action == "scale" && noteBase < 0) ||
             (action == "custom" && (last - first + 1 > 16 ||
@@ -786,6 +805,35 @@ class LoopController(context: Context) {
         }) return false // Do not silently override an already-customized CC bank.
         return putMidiRoute(null, deviceKey, 1, "cc", 20, 27,
             bass.id, "scale", 36, "major")
+    }
+
+    /** Optional preset for the dedicated CC Bank B. The hardware must have
+     * pads 1..4 set to Toggle and pads 5..8 set to Momentary. */
+    @Synchronized fun applyMpkMiniMk2StagePreset(deviceKey: String): Boolean {
+        val drums = tracks.firstOrNull { it.category == "鼓組" || it.bank == 128 } ?: return false
+        val bass = tracks.firstOrNull { it.category == "貝斯" ||
+            it.name.contains("Bass", ignoreCase = true) ||
+            it.name.contains("貝斯") } ?: return false
+        val strings = tracks.firstOrNull { it.category == "弦樂" ||
+            it.name.contains("弦樂") } ?: return false
+        val lead = tracks.firstOrNull { it.id !in setOf(drums.id, bass.id, strings.id) &&
+            (it.name.contains("Lead", ignoreCase = true) ||
+             it.category.contains("主奏")) } ?: return false
+        if (midiRoutes.size + 8 > 48 ||
+            midiRoutes.any { (it.deviceKey == deviceKey || it.deviceKey == "*") &&
+                (it.channel == 1 || it.channel == -1) && it.kind == "cc" &&
+                it.first <= 35 && it.last >= 28 }) return false
+        val targets = listOf(drums.id, bass.id, strings.id, lead.id)
+        for (i in 0..3) {
+            if (!putMidiRoute(null, deviceKey, 1, "cc", 28 + i, 28 + i,
+                targets[i], "mute")) return false
+        }
+        val commands = listOf("play-stop", "record-toggle", "metronome-toggle", "next-track")
+        for (i in 0..3) {
+            if (!putMidiRoute(null, deviceKey, 1, "cc", 32 + i, 32 + i,
+                0, commands[i])) return false
+        }
+        return true
     }
 
     @Synchronized fun setBpm(value: Int) {
@@ -922,6 +970,24 @@ class LoopController(context: Context) {
         if (selectedId == id) selectedId = tracks.firstOrNull()?.id ?: 0
         changed()
     }
+    @Synchronized fun setTrackMuted(id: Int, value: Boolean) {
+        val track = tracks.firstOrNull { it.id == id } ?: return
+        if (track.muted == value) return
+        track.muted = value
+        if (value) track.solo = false
+        silenceInaudibleTracks()
+        changed()
+    }
+
+    @Synchronized fun setTrackSolo(id: Int, value: Boolean) {
+        val track = tracks.firstOrNull { it.id == id } ?: return
+        if (track.solo == value) return
+        track.solo = value
+        if (value) track.muted = false
+        silenceInaudibleTracks()
+        changed()
+    }
+
     @Synchronized fun muteTrack(id: Int) {
         val track = tracks.firstOrNull { it.id == id } ?: return
         track.muted = !track.muted
