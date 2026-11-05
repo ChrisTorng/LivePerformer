@@ -164,6 +164,10 @@ private fun PerformerScreen() {
     var message by remember { mutableStateOf("啟動音訊中…") }
     var audioStatus by remember { mutableStateOf("Audio: starting…") }
     var midiStatus by remember { mutableStateOf("USB MIDI: scanning…") }
+    var midiDevices by remember { mutableStateOf(emptyList<MidiDeviceView>()) }
+    val midiLog = remember { mutableStateListOf<String>() }
+    var midiClockTarget by remember { mutableStateOf<Int?>(null) }
+    val midiInputRef = remember { mutableStateOf<MidiInput?>(null) }
     var baseNote by remember { mutableIntStateOf(settings.getInt("baseNote", 48).coerceIn(0, 96)) }
     var velocity by remember { mutableFloatStateOf(settings.getFloat("velocity", 100f).coerceIn(1f, 127f)) }
     var gain by remember { mutableFloatStateOf(settings.getFloat("gain", 0.8f).coerceIn(0.1f, 1.5f)) }
@@ -357,15 +361,38 @@ private fun PerformerScreen() {
         val ready = NativeEngine.start()
         NativeEngine.setGain(gain)
         val uiHandler = Handler(Looper.getMainLooper())
-        val input = MidiInput(context, { text ->
+        val input = MidiInput(context, { deviceList ->
             uiHandler.post {
-                midiStatus = text
+                midiDevices = deviceList
+                midiStatus = if (deviceList.none { it.outputPorts > 0 }) "USB MIDI：尚未連接鍵盤"
+                    else "USB MIDI：" + deviceList.filter { it.outputPorts > 0 }
+                        .joinToString { it.name }
+                if (midiClockTarget != null && deviceList.none { it.id == midiClockTarget }) {
+                    midiClockTarget = null
+                    midiInputRef.value?.setClockTarget(null)
+                }
                 if (!keyboardOverride) {
-                    keyboardMode = if (text.contains("尚未連接")) KeyboardMode.PLAY
+                    keyboardMode = if (deviceList.none { it.outputPorts > 0 }) KeyboardMode.PLAY
                         else KeyboardMode.MONITOR
                 }
             }
-        }, looper::onMidi)
+        }, { event ->
+            looper.onExternalMidi(event)
+            // MIDI realtime Clock is too frequent for the five-line rolling monitor.
+            if (event.status != 0xf8 && event.status != 0xfe) uiHandler.post {
+                midiLog.add(0, MidiDiagnostics.format(event))
+                while (midiLog.size > 5) midiLog.removeAt(midiLog.lastIndex)
+            }
+        })
+        midiInputRef.value = input
+        looper.setClockSender(input::sendClock)
+        looper.masterVolumeFromMidi = { newGain ->
+            NativeEngine.setGain(newGain)
+            uiHandler.post {
+                gain = newGain
+                settings.edit().putFloat("gain", newGain).apply()
+            }
+        }
         if (ready) scope.launch {
             try {
                 withContext(Dispatchers.IO) { loadBundledFont(context) }
@@ -376,6 +403,9 @@ private fun PerformerScreen() {
         } else message = "無法開啟低延遲音訊輸出"
         onDispose {
             keyboard.allNotesOff()
+            looper.setClockSender(null)
+            looper.masterVolumeFromMidi = null
+            midiInputRef.value = null
             input.close()
             looper.close()
             NativeEngine.stop()
@@ -732,7 +762,12 @@ private fun PerformerScreen() {
             Text("儲存與讀取只列出 .lvp 專案及 .lvpt 音軌範本；兩者內部仍為 JSON。",
                 style = MaterialTheme.typography.bodySmall)
             Text("音軌編輯、樂器選擇及排序在演奏畫面操作。", style = MaterialTheme.typography.bodySmall)
+            MidiRoutingSettings(loopState, looper, midiDevices, onMessage = { message = it })
             } else {
+            MidiSystemPanel(midiDevices, midiLog, midiClockTarget, onClockTarget = { id ->
+                midiClockTarget = id
+                midiInputRef.value?.setClockTarget(id)
+            })
             Text("音色庫", style = MaterialTheme.typography.titleMedium)
             fonts.forEach { font ->
                 Row(verticalAlignment = Alignment.CenterVertically,
