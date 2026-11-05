@@ -101,3 +101,10 @@ assert 'guardedLoad' in activity and 'markSavedIfUnchanged' in looper
 assert 'detectDragGesturesAfterLongPress' in panel and 'TransportButton' in panel
 assert (root/'app/src/main/java/tw/idv/christorng/liveperformer/InstrumentNaming.kt').exists()
 print('PASS: meter-aware playback, multi-solo, track reordering, save-before-load and stage controls')
+
+# All installable PR APKs must share the persistent main-release debug certificate.
+assert "github.event_name == 'pull_request'" in workflow
+assert 'Restore persistent development signing key' in workflow
+assert 'applyMpkMiniMk2StagePreset' in looper
+assert 'play-stop' in looper and 'record-toggle' in looper and 'metronome-toggle' in looper
+print('PASS: PR APK stable signing and CC bank stage controls wired')
