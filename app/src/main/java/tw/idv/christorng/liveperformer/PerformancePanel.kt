@@ -124,6 +124,7 @@ fun PerformancePanel(
     volume: Float,
     onVolume: (Float) -> Unit,
     onProjectSettings: () -> Unit,
+    onMidiSettings: () -> Unit,
     onSystemSettings: () -> Unit,
     onInstrument: () -> Unit,
     onAddTrack: () -> Unit,
@@ -252,7 +253,7 @@ fun PerformancePanel(
                                     DropdownMenuItem(text = { Text("MIDI 控制設定") }, onClick = {
                                         showTrackMenu = false
                                         looper.selectTrack(track.id)
-                                        onProjectSettings()
+                                        onMidiSettings()
                                     })
                                     DropdownMenuItem(text = { Text("重新命名") }, onClick = {
                                         showTrackMenu = false

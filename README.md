@@ -84,3 +84,21 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - MIDI output Clock is selectable under System and sends Start/Stop and MIDI Clock at 24 PPQN from the existing 4-ms scheduler. MPK mini MK2 must use Editor Clock External and Send To RAM for ARP external synchronization; clock timing is best-effort, not sample-accurate.
 - Existing projects without `midiRoutes` remain supported. MIDI output ID is not persisted across reconnect. Two identical devices without distinguishable serial numbers share a mapping identity.
 - Limitations: only one armed track records at a time; simultaneous live multi-track notes do not automatically record every played track. No MIDI Learn, custom drum map, minor scale, Windows GUI or physical device verification yet.
+
+## v0.4.3: Mobile MIDI mapping refinement (feature branch)
+
+- Narrow portrait screen: project buttons wrap, MIDI route editor occupies a separate settings page. Back returns to Project settings, then Performance.
+- CC numbers (e.g. 20-27) are controller identifiers, not notes. Routes convert them to playable pitches without reprogramming the hardware.
+- Per-route 12-key major/natural-minor scale with octave, or custom per-note mapping (maximum 16 notes, -1 disables a pad). Custom mappings and scale mode persist in .lvp/.lvpt JSON alongside the existing route fields.
+- Existing projects without noteMap and scaleMode still import.
+- Route editing replaces the old rule in place. Real Android MIDI hardware and portrait layouts still need device validation.
+- NOTE: PR branch builds may be downloaded as GitHub Actions artifacts. The main-release workflow is still configured for the v0.4.2 release tag until its publishing configuration can be updated.
+
+### PR APK signature and MPK mini MK2 CC Bank B controls
+
+- CI restores the publicly shared disposable **development-only** keystore for both PR and main builds. Pull-request APKs can now replace an installed v0.4.2 development build without uninstalling the app and losing app-private projects or imported SF2 data. Never reuse this public key for production distribution.
+- The optional **CC Bank B stage** preset expects MK2 Pad MIDI Channel 2: CC28-31 (Pads 1-4, bottom row) hardware **Toggle** map to mute/unmute Drums/Bass/Strings/Lead, and CC32-35 (Pads 5-8, top row) hardware **Momentary** map to Play/Stop, Record/End, Metronome toggle and Select Next Track.
+- Toggle CC values >=64 set the assigned switch ON, <64 set it OFF; momentary commands execute on the ON press only (not release). Source Bank B Note mode also uses the same per-pad toggle/momentary settings, so Toggle Note pads are unsuitable for ordinary short Bass notes.
+- This shortcut requires existing tracks identifiable as drums, bass, strings, lead, and will refuse to overwrite existing overlapping CC28-35 routes. The individual route editor also exposes Mute/Solo and transport commands for other MIDI controllers.
+- Save the MK2 Editor program and **Send To RAM** / the desired numbered hardware program; an editor file alone does not change the MIDI keyboard. For external arpeggiator sync select MIDI Clock output under LivePerformer System, set MK2 Arpeggiator CLOCK External, then press Play.
+- Because controller latch state is separate from app/project state, a previously toggled pad can be out of sync after loading a new project. Toggle buttons set the received state explicitly rather than flipping state blindly; use the app UI to inspect current M/S state.

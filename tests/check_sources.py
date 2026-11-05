@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.4.2' in workflow and 'versionCode = 11' in gradle
+assert 'v0.4.3' in workflow and 'versionCode = 12' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -101,3 +101,10 @@ assert 'guardedLoad' in activity and 'markSavedIfUnchanged' in looper
 assert 'detectDragGesturesAfterLongPress' in panel and 'TransportButton' in panel
 assert (root/'app/src/main/java/tw/idv/christorng/liveperformer/InstrumentNaming.kt').exists()
 print('PASS: meter-aware playback, multi-solo, track reordering, save-before-load and stage controls')
+
+# All installable PR APKs must share the persistent main-release debug certificate.
+assert "github.event_name == 'pull_request'" in workflow
+assert 'Restore persistent development signing key' in workflow
+assert 'applyMpkMiniMk2StagePreset' in looper
+assert 'play-stop' in looper and 'record-toggle' in looper and 'metronome-toggle' in looper
+print('PASS: PR APK stable signing and CC bank stage controls wired')

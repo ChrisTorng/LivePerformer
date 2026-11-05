@@ -1,26 +1,46 @@
 package tw.idv.christorng.liveperformer
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
-/**
- * Project-level mappings. Source device/port/channel are physical inputs;
- * target channel is always assigned by the track. Keep this editor out of the stage view.
- */
+/** Menus occupy full lines on a phone and never squeeze a neighbouring field. */
+@Composable
+private fun MidiChoice(
+    label: String, options: List<Pair<String, String>>, onPick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier) {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { entry ->
+                DropdownMenuItem(text = { Text(entry.second) }, onClick = {
+                    expanded = false
+                    onPick(entry.first)
+                })
+            }
+        }
+    }
+}
+
 @Composable
 fun MidiRoutingSettings(
-    state: LoopView,
-    looper: LoopController,
-    devices: List<MidiDeviceView>,
+    state: LoopView, looper: LoopController, devices: List<MidiDeviceView>,
     onMessage: (String) -> Unit
 ) {
     var feedback by remember { mutableStateOf("") }
+    var editingId by remember { mutableStateOf<Int?>(null) }
     var deviceKey by remember { mutableStateOf("*") }
     var channel by remember { mutableStateOf("2") }
     var kind by remember { mutableStateOf("note") }
@@ -28,141 +48,264 @@ fun MidiRoutingSettings(
     var last by remember { mutableStateOf("43") }
     var action by remember { mutableStateOf("note") }
     var noteBase by remember { mutableStateOf("-1") }
-    var targetTrack by remember(state.selectedId) {
-        mutableIntStateOf(state.selectedId.takeIf { it != 0 } ?: state.tracks.firstOrNull()?.id ?: 0)
-    }
-    var deviceMenu by remember { mutableStateOf(false) }
-    var kindMenu by remember { mutableStateOf(false) }
-    var actionMenu by remember { mutableStateOf(false) }
-    var trackMenu by remember { mutableStateOf(false) }
+    var scaleMode by remember { mutableStateOf("major") }
+    var key by remember { mutableIntStateOf(0) }
+    var octave by remember { mutableIntStateOf(2) }
+    var targetTrack by remember { mutableIntStateOf(state.selectedId) }
+    val custom = remember { mutableStateListOf<String>() }
 
-    HorizontalDivider()
-    Text("MIDI 輸入路由（隨專案保存）", style = MaterialTheme.typography.titleMedium)
-    Text("主鍵盤預設仍控制目前選取的音軌；以下規則可讓 Pad／CC 固定控制其他音軌。",
-        style = MaterialTheme.typography.bodySmall)
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box {
-            OutlinedButton(onClick = { deviceMenu = true }) {
-                Text(if (deviceKey == "*") "來源：任何裝置" else
-                    "來源：" + (devices.firstOrNull { it.key == deviceKey }?.name ?: "儲存的裝置"))
-            }
-            DropdownMenu(expanded = deviceMenu, onDismissRequest = { deviceMenu = false }) {
-                DropdownMenuItem(text = { Text("任何裝置") }, onClick = {
-                    deviceKey = "*"; deviceMenu = false
-                })
-                devices.filter { it.outputPorts > 0 }.forEach { device ->
-                    DropdownMenuItem(text = { Text(device.name + " #" + device.id) }, onClick = {
-                        deviceKey = device.key; deviceMenu = false
-                    })
-                }
-            }
-        }
-        OutlinedButton(onClick = {
-            feedback = if (!looper.applyMpkMiniMk2Preset(deviceKey))
-                "請先建立鼓組及 Bass 音軌，或檢查路由上限"
-            else "已設定 Pad A → 鼓組、Pad B → Bass（Channel 2）"
+    fun makeScale(): List<String> {
+        val size = ((last.toIntOrNull() ?: 0) - (first.toIntOrNull() ?: 0) + 1).coerceIn(0, 16)
+        val root = (octave + 1) * 12 + key
+        return List(size) { MidiPitch.scale(root, it, scaleMode).coerceAtMost(127).toString() }
+    }
+    fun load(route: MidiRoute) {
+        editingId = route.id
+        deviceKey = route.deviceKey
+        channel = (route.channel + 1).toString()
+        kind = route.kind
+        first = route.first.toString()
+        last = route.last.toString()
+        targetTrack = route.trackId
+        action = route.action
+        noteBase = route.noteBase.toString()
+        scaleMode = route.scaleMode
+        val root = if (route.noteBase >= 0) route.noteBase else 36
+        key = root % 12
+        octave = (root / 12 - 1).coerceIn(0, 7)
+        custom.clear()
+        custom.addAll(route.noteMap.map { it.toString() })
+        feedback = "編輯第 " + route.id + " 條路由"
+    }
+
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("主鍵盤仍彈奏選取音軌；Pad 和 CC 可鎖定至其他音軌。",
+            style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = {
+            feedback = if (looper.applyMpkMiniMk2Preset(deviceKey))
+                "已套用 Pad：Note 36–43 → 鼓，44–51 → Bass"
+            else "請先建立鼓組與 Bass 音軌"
             onMessage(feedback)
-        }) { Text("套用 MPK mini MK2 Pad 範例") }
-    }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(value = channel, onValueChange = { channel = it.filter(Char::isDigit).take(2) },
-            label = { Text("Ch 1–16") }, singleLine = true, modifier = Modifier.width(95.dp))
-        Box {
-            OutlinedButton(onClick = { kindMenu = true }) {
-                Text(when (kind) { "cc" -> "CC"; "program" -> "PC"; else -> "Note" })
-            }
-            DropdownMenu(expanded = kindMenu, onDismissRequest = { kindMenu = false }) {
-                listOf("note" to "Note", "cc" to "CC", "program" to "Program Change").forEach { (value, title) ->
-                    DropdownMenuItem(text = { Text(title) }, onClick = {
-                        kind = value; kindMenu = false
-                        if (kind == "cc" && action == "scale") action = "note"
-                    })
-                }
-            }
+        }) { Text("套用 MPK mini MK2 範例", maxLines = 1) }
+        OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = {
+            feedback = if (looper.applyMpkMiniMk2CcBassPreset(deviceKey))
+                "已設定 CC 20–27 → Bass C2 大調，可再按編輯改調性或逐鍵音高"
+            else "請先建立 Bass 音軌，或已有 CC 20–27 路由（請按編輯）"
+            onMessage(feedback)
+        }) { Text("CC 20–27 → Bass（C2 大調）", maxLines = 1) }
+        OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = {
+            feedback = if (looper.applyMpkMiniMk2StagePreset(deviceKey))
+                "已套用 CC Bank B：28–31 各軌 Mute，32–35 播放、錄製、節拍器及下一軌"
+            else "需先有鼓組、Bass、弦樂、Lead，或 CC 28–35 已有對應規則"
+            onMessage(feedback)
+        }) { Text("套用 CC Bank B 舞台控制", maxLines = 1) }
+        HorizontalDivider()
+        Text(if (editingId == null) "新增 MIDI 路由" else "編輯第 " + editingId + " 條路由",
+            style = MaterialTheme.typography.titleMedium)
+        Text("MIDI 來源", style = MaterialTheme.typography.labelLarge)
+        MidiChoice(if (deviceKey == "*") "任何 MIDI 裝置" else
+            devices.firstOrNull { it.key == deviceKey }?.name ?: "已儲存的離線裝置",
+            listOf("*" to "任何 MIDI 裝置") + devices.filter { it.outputPorts > 0 }
+                .map { it.key to (it.name + " #" + it.id) },
+            { deviceKey = it }, Modifier.fillMaxWidth())
+
+        Text("輸入 Channel／訊息", style = MaterialTheme.typography.labelLarge)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(channel, onValueChange = {
+                channel = it.filter(Char::isDigit).take(2)
+            }, label = { Text("Ch 1–16", maxLines = 1) }, singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f))
+            MidiChoice(when (kind) { "cc" -> "CC"; "program" -> "PC"; else -> "Note" },
+                listOf("note" to "Note", "cc" to "CC", "program" to "Program Change"),
+                {
+                    kind = it
+                    action = if (it == "program") "select-track" else "note"
+                    if (it == "cc" && first == "36") {
+                        first = "20"; last = "27"; noteBase = "36"
+                    }
+                }, Modifier.weight(1f))
         }
-        OutlinedTextField(value = first, onValueChange = { first = it.filter(Char::isDigit).take(3) },
-            label = { Text("起始編號") }, singleLine = true, modifier = Modifier.width(100.dp))
-        OutlinedTextField(value = last, onValueChange = { last = it.filter(Char::isDigit).take(3) },
-            label = { Text("結束編號") }, singleLine = true, modifier = Modifier.width(100.dp))
-    }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box {
-            OutlinedButton(onClick = { trackMenu = true }) {
-                Text(if (targetTrack == 0) "主輸出" else
-                    state.tracks.firstOrNull { it.id == targetTrack }?.name ?: "選擇音軌")
-            }
-            DropdownMenu(expanded = trackMenu, onDismissRequest = { trackMenu = false }) {
-                DropdownMenuItem(text = { Text("主輸出（僅總音量）") }, onClick = {
-                    targetTrack = 0; trackMenu = false
-                })
-                state.tracks.forEach { track ->
-                    DropdownMenuItem(text = { Text(track.name + "（Ch " + (track.channel + 1) + "）") },
-                        onClick = { targetTrack = track.id; trackMenu = false })
-                }
-            }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(first, onValueChange = {
+                first = it.filter(Char::isDigit).take(3)
+            }, label = { Text("起始編號", maxLines = 1) }, singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f))
+            OutlinedTextField(last, onValueChange = {
+                last = it.filter(Char::isDigit).take(3)
+            }, label = { Text("結束編號", maxLines = 1) }, singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f))
         }
-        Box {
-            OutlinedButton(onClick = { actionMenu = true }) {
-                Text(when (action) {
-                    "scale" -> "音階彈奏"
-                    "volume" -> "軌音量"
-                    "pan" -> "左右平衡"
-                    "master" -> "總音量"
-                    "select-track" -> "切換音軌"
-                    else -> "音符彈奏"
-                })
-            }
-            DropdownMenu(expanded = actionMenu, onDismissRequest = { actionMenu = false }) {
-                val options = if (kind == "cc") listOf(
-                    "note" to "CC → 音符（按下 64–127，放開 0–63）",
-                    "scale" to "CC → 音階",
-                    "volume" to "音軌音量", "pan" to "左右平衡", "master" to "總音量"
-                ) else if (kind == "program") listOf("select-track" to "切換音軌")
-                else listOf("note" to "原音／轉調", "scale" to "音階彈奏")
-                options.forEach { (value, title) ->
-                    DropdownMenuItem(text = { Text(title) },
-                        onClick = { action = value; actionMenu = false })
-                }
-            }
+        Text("目標音軌", style = MaterialTheme.typography.labelLarge)
+        MidiChoice(state.tracks.firstOrNull { it.id == targetTrack }?.name ?:
+            if (targetTrack == 0) "主音量" else "請選擇音軌",
+            listOf("0" to "主音量") +
+                state.tracks.map { it.id.toString() to
+                    (it.name + "（Ch " + (it.channel + 1) + "）") },
+            { targetTrack = it.toInt() }, Modifier.fillMaxWidth())
+
+        Text("映射方式", style = MaterialTheme.typography.labelLarge)
+        val actions = when (kind) {
+            "program" -> listOf("select-track" to "切換音軌")
+            "cc" -> listOf("note" to "CC → 指定首音（半音）",
+                "scale" to "CC → 調性音階", "custom" to "CC → 逐鍵指定",
+                "volume" to "音軌音量", "pan" to "左右平衡", "master" to "總音量",
+                "mute" to "指定軌 Mute（Toggle）",
+                "solo" to "指定軌 Solo（Toggle）",
+                "play-stop" to "播放／停止（Momentary）",
+                "record-toggle" to "錄製／結束（Momentary）",
+                "metronome-toggle" to "節拍器切換（Momentary）",
+                "next-track" to "選取下一軌（Momentary）")
+            else -> listOf("note" to "原始／半音音高",
+                "scale" to "調性音階", "custom" to "逐鍵指定")
         }
-        if (action == "note" || action == "scale") {
-            OutlinedTextField(value = noteBase, onValueChange = {
+        MidiChoice(actions.firstOrNull { it.first == action }?.second ?: "選擇動作",
+            actions, { selected ->
+                action = selected
+                if (selected in setOf("play-stop", "record-toggle",
+                        "metronome-toggle", "next-track", "master")) targetTrack = 0
+                else if (targetTrack == 0) targetTrack =
+                    state.selectedId.takeIf { it != 0 } ?: state.tracks.firstOrNull()?.id ?: 0
+                if (selected == "custom" && custom.size != makeScale().size) {
+                    custom.clear()
+                    custom.addAll(makeScale())
+                }
+            }, Modifier.fillMaxWidth())
+
+        if (action == "note") {
+            OutlinedTextField(noteBase, onValueChange = {
                 noteBase = it.filter { c -> c.isDigit() || c == '-' }.take(4)
-            }, label = { Text(if (action == "scale") "主音 MIDI" else "目標首音 (-1 原音)") },
-                singleLine = true, modifier = Modifier.width(145.dp))
+            }, label = { Text("目標首音（-1 = 保留原音）") },
+                singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth())
         }
-    }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (action == "scale" || action == "custom") {
+            Text("調性／音域（只影響本條路由）",
+                style = MaterialTheme.typography.labelLarge)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MidiChoice("主音 " + MidiPitch.names[key],
+                    MidiPitch.names.mapIndexed { i, name -> i.toString() to name },
+                    { key = it.toInt() }, Modifier.weight(1f))
+                MidiChoice(if (scaleMode == "major") "大調" else "自然小調",
+                    listOf("major" to "大調", "minor" to "自然小調"),
+                    { scaleMode = it }, Modifier.weight(1f))
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("首音 " + MidiPitch.names[key] + octave,
+                    modifier = Modifier.weight(1f))
+                OutlinedButton(onClick = { octave = (octave - 1).coerceAtLeast(0) }) {
+                    Text("−")
+                }
+                OutlinedButton(onClick = { octave = (octave + 1).coerceAtMost(7) }) {
+                    Text("+")
+                }
+            }
+        }
+        if (action == "custom") {
+            Text("逐鍵音高：-1 表示停用。最多一次 16 鍵。",
+                style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = {
+                custom.clear()
+                custom.addAll(makeScale())
+            }, modifier = Modifier.fillMaxWidth()) { Text("依目前調性填入各鍵") }
+            val start = first.toIntOrNull() ?: 0
+            val end = last.toIntOrNull() ?: -1
+            val count = (end - start + 1).coerceIn(0, 16)
+            repeat((count + 1) / 2) { line ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (column in 0..1) {
+                        val i = line * 2 + column
+                        if (i < count) {
+                            val value = custom.getOrNull(i).orEmpty()
+                            OutlinedTextField(value, onValueChange = {
+                                while (custom.size <= i) custom.add("")
+                                custom[i] = it.filter { c -> c.isDigit() || c == '-' }.take(4)
+                            }, label = { Text((start + i).toString() + " → " +
+                                MidiPitch.name(value.toIntOrNull() ?: -1), maxLines = 1) },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f))
+                        } else Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+            if (end - start + 1 > 16) Text("逐鍵模式範圍最多 16，請拆成多條路由。",
+                color = MaterialTheme.colorScheme.error)
+        }
+
+        if (action in setOf("note", "scale", "custom")) {
+            val start = first.toIntOrNull() ?: -1
+            val end = last.toIntOrNull() ?: -1
+            if (start in 0..127 && end in start..127) {
+                val base = (octave + 1) * 12 + key
+                val preview = (start..end.coerceAtMost(start + 7)).mapIndexed { i, input ->
+                    val pitch = when (action) {
+                        "scale" -> MidiPitch.scale(base, i, scaleMode)
+                        "custom" -> custom.getOrNull(i)?.toIntOrNull() ?: -1
+                        else -> (noteBase.toIntOrNull() ?: -1).let { if (it < 0) input else it + i }
+                    }
+                    input.toString() + " → " + MidiPitch.name(pitch) + " (" + pitch + ")"
+                }
+                Text("預覽：" + preview.joinToString("  "),
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        }
         Button(onClick = {
             val ch = channel.toIntOrNull()?.minus(1) ?: -100
             val start = first.toIntOrNull() ?: -1
             val end = last.toIntOrNull() ?: -1
-            val base = noteBase.toIntOrNull() ?: -1
-            val valid = (action == "master" && targetTrack == 0) ||
-                (action != "master" && targetTrack != 0)
-            if (!valid || !looper.addMidiRoute(deviceKey, ch, kind, start, end,
-                    targetTrack, action, base)) {
-                feedback = "MIDI 路由設定無效：請確認 Channel、範圍與目標音軌"
-            } else feedback = "已新增 MIDI 路由"
+            val pitch = if (action == "scale" || action == "custom") (octave + 1) * 12 + key
+                else noteBase.toIntOrNull() ?: -2
+            val customMap = if (action == "custom") custom.map { it.toIntOrNull() ?: -2 }
+                else emptyList()
+            val ok = looper.putMidiRoute(editingId, deviceKey, ch, kind, start, end,
+                targetTrack, action, pitch, scaleMode, customMap)
+            feedback = if (ok) "路由已儲存至專案" else
+                "無效路由：請確認 Ch、編號、音高與目標音軌。"
+            if (ok) editingId = null
             onMessage(feedback)
-        }) { Text("新增路由") }
-        Text("CC Pad 建議使用 Momentary；不相容的裝置可改用通用編號設定。",
+        }, modifier = Modifier.fillMaxWidth()) {
+            Text(if (editingId == null) "新增路由" else "儲存修改")
+        }
+        if (editingId != null) {
+            OutlinedButton(onClick = { editingId = null; feedback = "" },
+                modifier = Modifier.fillMaxWidth()) { Text("取消編輯") }
+        }
+        if (feedback.isNotBlank()) Text(feedback, style = MaterialTheme.typography.bodySmall)
+        Text("Bank B 建議：Pad 1–4 設 Toggle 控制 Mute，Pad 5–8 設 Momentary 控制播放、錄製、節拍器與下一軌。Toggle 依 CC 127／0 設定開關狀態，切換專案後控制器狀態未必同步。", style = MaterialTheme.typography.bodySmall)
+        Text("CC 20 是控制器編號，不是音高。若用 CC Pad 彈奏，請在硬體使用 Momentary 模式：按下 127、放開 0。",
             style = MaterialTheme.typography.bodySmall)
-    }
-    if (feedback.isNotEmpty()) Text(feedback, style = MaterialTheme.typography.bodySmall)
-    state.midiRoutes.forEach { route ->
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val dev = if (route.deviceKey == "*") "所有" else
+        HorizontalDivider()
+        Text("已儲存的 MIDI 路由：" + state.midiRoutes.size,
+            style = MaterialTheme.typography.titleMedium)
+        if (state.midiRoutes.isEmpty()) Text("目前沒有固定路由。")
+        state.midiRoutes.forEach { route ->
+            val device = if (route.deviceKey == "*") "任何裝置" else
                 devices.firstOrNull { it.key == route.deviceKey }?.name ?: "離線裝置"
-            val target = state.tracks.firstOrNull { it.id == route.trackId }?.name ?: "主音量"
-            Text(dev + " / Ch " + (route.channel + 1) + " / " + route.kind.uppercase() +
-                " " + route.first + "–" + route.last + " → " + target +
-                " (" + route.action + (if (route.noteBase >= 0) " " + route.noteBase else "") + ")",
-                modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = { looper.removeMidiRoute(route.id) }) { Text("移除") }
+            val name = state.tracks.firstOrNull { it.id == route.trackId }?.name ?: "主音量"
+            Text(device + " / Ch " + (route.channel + 1) + " / " +
+                route.kind.uppercase() + " " + route.first + "–" + route.last,
+                style = MaterialTheme.typography.bodySmall)
+            Text("→ " + name + " · " + when (route.action) {
+                "scale" -> MidiPitch.name(route.noteBase) +
+                    if (route.scaleMode == "minor") " 自然小調" else " 大調"
+                "custom" -> "逐鍵指定"
+                "note" -> if (route.noteBase < 0) "原音" else "首音 " + MidiPitch.name(route.noteBase)
+                else -> route.action
+            }, style = MaterialTheme.typography.bodySmall)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { load(route) }, modifier = Modifier.weight(1f)) { Text("編輯") }
+                OutlinedButton(onClick = {
+                    if (editingId == route.id) editingId = null
+                    looper.removeMidiRoute(route.id)
+                }, modifier = Modifier.weight(1f)) { Text("移除") }
+            }
+            HorizontalDivider()
         }
     }
-    if (state.midiRoutes.isEmpty()) Text("尚未設定固定路由。", style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable
