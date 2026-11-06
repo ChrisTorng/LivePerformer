@@ -213,8 +213,9 @@ internal object Sf3ToSf2Converter {
                                     val frames: Long
                                     if (sample.compressed) {
                                         require(sample.start < smpl.size && sample.end >= sample.start &&
-                                            sample.end < smpl.size && sample.sampleRate in 4000..384000) {
-                                            "SF3 第 ${index + 1} 個壓縮樣本範圍錯誤"
+                                            sample.end <= smpl.size && sample.sampleRate in 4000..384000) {
+                                            "SF3 第 ${index + 1} 個壓縮樣本範圍錯誤：" +
+                                                "start=${sample.start}, end=${sample.end}, smpl=${smpl.size}"
                                         }
                                         input.seek(smpl.data + sample.start)
                                         require(fourcc(input) == "OggS") {
@@ -222,7 +223,8 @@ internal object Sf3ToSf2Converter {
                                         }
                                         // SF3 dwEnd is inclusive: the last byte of the Ogg stream.
                                         frames = decoder.decode(source, smpl.data + sample.start,
-                                            sample.end - sample.start + 1, out, sample.sampleRate)
+                                            minOf(sample.end - sample.start + 1,
+                                                smpl.size - sample.start), out, sample.sampleRate)
                                         decoded = true
                                     } else {
                                         require(sample.end >= sample.start &&
