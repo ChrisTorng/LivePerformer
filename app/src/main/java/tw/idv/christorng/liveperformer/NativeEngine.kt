@@ -8,6 +8,7 @@ object NativeEngine {
     external fun consumeReconnectRequest(): Boolean
     external fun stop()
     external fun loadSf2(path: String): Boolean
+    external fun validateSoundFont(path: String): Boolean
     external fun loadFontCollection(paths: Array<String>): Boolean
     external fun selectFontPreset(channel: Int, fontIndex: Int, bank: Int, program: Int)
     external fun collectRetired()
