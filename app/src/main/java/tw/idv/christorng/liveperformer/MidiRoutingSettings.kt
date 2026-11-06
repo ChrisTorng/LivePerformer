@@ -311,30 +311,37 @@ fun MidiRoutingSettings(
 @Composable
 fun MidiSystemPanel(
     devices: List<MidiDeviceView>,
-    messages: List<String>,
+    messagesByDevice: Map<Int, List<String>>,
     clockTargetId: Int?,
     onClockTarget: (Int?) -> Unit
 ) {
-    HorizontalDivider()
-    Text("MIDI 裝置／診斷", style = MaterialTheme.typography.titleMedium)
+    Text("MIDI 裝置／測試", style = MaterialTheme.typography.titleMedium)
     if (devices.isEmpty()) Text("尚未偵測到 MIDI 裝置，請確認 USB Host 與供電。")
-    devices.forEach { d ->
-        Text(d.name + "（ID " + d.id + "）" +
-            " · 輸入到 App：" + d.outputPorts + " 埠" +
-            " · App 可輸出：" + d.inputPorts + " 埠",
+    devices.forEach { device ->
+        Text(device.name + "（ID " + device.id + "）" +
+            " · 輸入到 App：" + device.outputPorts + " 埠" +
+            " · App 輸出：" + device.inputPorts + " 埠",
             style = MaterialTheme.typography.bodySmall)
+        OutlinedTextField(
+            value = messagesByDevice[device.id].orEmpty().joinToString("\n"),
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("最近 MIDI 訊息（最多 50 筆）") },
+            minLines = 4,
+            maxLines = 8,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
-    Text("最新五筆 MIDI（由新到舊）", style = MaterialTheme.typography.titleSmall)
-    if (messages.isEmpty()) Text("尚未收到 MIDI 訊息。", style = MaterialTheme.typography.bodySmall)
-    messages.forEach { item -> Text(item, style = MaterialTheme.typography.bodySmall) }
+    HorizontalDivider()
     Text("MIDI Clock 輸出（實驗性 24 PPQN）", style = MaterialTheme.typography.titleSmall)
     Row(Modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip(selected = clockTargetId == null, onClick = { onClockTarget(null) },
-            label = { Text("關閉") })
-        devices.filter { it.inputPorts > 0 }.forEach { d ->
-            FilterChip(selected = clockTargetId == d.id, onClick = { onClockTarget(d.id) },
-                label = { Text(d.name + " #" + d.id) })
+            label = { Text("停用") })
+        devices.filter { it.inputPorts > 0 }.forEach { device ->
+            FilterChip(selected = clockTargetId == device.id,
+                onClick = { onClockTarget(device.id) },
+                label = { Text(device.name) })
         }
     }
     Text("選擇裝置後，開始／停止播放會送 MIDI Start／Stop，播放期間送 Clock。MPK mini MK2 必須在 Editor 將 Arpeggiator CLOCK 設為 External 並 Send To RAM；目前時序受 Android 排程精度限制。",
