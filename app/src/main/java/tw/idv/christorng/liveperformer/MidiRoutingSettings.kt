@@ -326,7 +326,7 @@ fun MidiSystemPanel(
             value = messagesByDevice[device.id].orEmpty().joinToString("\n"),
             onValueChange = {},
             readOnly = true,
-            label = { Text("最近 MIDI 訊息（最多 50 筆）") },
+            label = { Text("MIDI 訊息（最新在上，最多 50 筆）") },
             minLines = 4,
             maxLines = 8,
             modifier = Modifier.fillMaxWidth()
