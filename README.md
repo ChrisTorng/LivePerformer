@@ -1,4 +1,4 @@
-# LivePerformer — Android low-latency MIDI instrument and looper (v0.3.0)
+# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.4)
 
 **Status: early source prototype, not yet device-verified.** Initial target: Samsung Galaxy A25 5G, USB MIDI keyboard, wired 3.5 mm headphones. v0.2.1 adds an ergonomic single-screen interface and v0.2 includes an experimental MIDI-only loop recorder; physical device performance remains unverified.
 
@@ -6,7 +6,7 @@
 
 - Multitrack MIDI loop: play/pause, one-cycle recording/overdub, clear, tempo (40–240 BPM), 1/2/4/8 bars, metronome toggle, per-track mute, add/select/delete instruments. Default 120 BPM, two bars, and a one-bar drum pattern repeated twice. Track MIDI clips and settings persist locally. Playback uses a 4 ms Android scheduler and is **not sample-accurate**; audio synthesis remains native.
 - Native Oboe / AAudio low-latency stereo output (try Exclusive, fall back to Shared).
-- FluidSynth 2.4.6 SF2 synthesis via a directly linked Android Prefab AAR.
+- FluidSynth 2.4.6 SoundFont synthesis (SF2; SF3 only if the bundled Android library can decode it) via a directly linked Android Prefab AAR.
 - Auto-discovery of USB MIDI devices, notes, velocity, pedal CC64, program change and pitch bend.
 - 128 GM instrument menu, two-octave multitouch piano keyboard, octave shift, adjustable on-screen velocity.
 - Automatic first-launch GeneralUser GS bank; imported SF2 supports Salamander Grand Piano.
@@ -77,11 +77,11 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 
 ## v0.4.2 experimental multi-device MIDI routing
 
-- System -> MIDI device/diagnostics lists multiple MIDI devices and five newest inbound events including source, channel, note/CC/program/pitch bend. Clock (0xF8) and Active Sensing (0xFE) are excluded to avoid drowning out test data.
+- System -> MIDI testing lists connected MIDI devices and their own 50-event logs (channel, note/CC/program/pitch bend; no repeated timestamps or source names). Clock (0xF8) and Active Sensing (0xFE) are excluded to avoid drowning out test data.
 - Project -> MIDI routing stores up to 48 device/channel/kind/number-range/target/action rules under the `midiRoutes` JSON field. Note or momentary CC pads can play different tracks, optionally transposed or mapped to an eight-step major scale.
 - The MPK mini MK2 shortcut uses the supplied Editor screenshot: channel 2, Note 36-43 to existing drum track, Note 44-51 to existing Bass track. Source keyboards default to playing the selected track; extra CC mappings can be manually added.
 - Explicit CC rules may control track volume CC7, track pan CC10, or master FluidSynth gain; Program Change is diagnostic-only unless mapped to select-track.
-- MIDI output Clock is selectable under System and sends Start/Stop and MIDI Clock at 24 PPQN from the existing 4-ms scheduler. MPK mini MK2 must use Editor Clock External and Send To RAM for ARP external synchronization; clock timing is best-effort, not sample-accurate.
+- MIDI output Clock is selectable under System → MIDI testing and sends Start/Stop and MIDI Clock at 24 PPQN from the existing 4-ms scheduler. MPK mini MK2 must use Editor Clock External and Send To RAM for ARP external synchronization; clock timing is best-effort, not sample-accurate.
 - Existing projects without `midiRoutes` remain supported. MIDI output ID is not persisted across reconnect. Two identical devices without distinguishable serial numbers share a mapping identity.
 - Limitations: only one armed track records at a time; simultaneous live multi-track notes do not automatically record every played track. No MIDI Learn, custom drum map, minor scale, Windows GUI or physical device verification yet.
 
@@ -100,5 +100,13 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - The optional **CC Bank B stage** preset expects MK2 Pad MIDI Channel 2: CC28-31 (Pads 1-4, bottom row) hardware **Toggle** map to mute/unmute Drums/Bass/Strings/Lead, and CC32-35 (Pads 5-8, top row) hardware **Momentary** map to Play/Stop, Record/End, Metronome toggle and Select Next Track.
 - Toggle CC values >=64 set the assigned switch ON, <64 set it OFF; momentary commands execute on the ON press only (not release). Source Bank B Note mode also uses the same per-pad toggle/momentary settings, so Toggle Note pads are unsuitable for ordinary short Bass notes.
 - This shortcut requires existing tracks identifiable as drums, bass, strings, lead, and will refuse to overwrite existing overlapping CC28-35 routes. The individual route editor also exposes Mute/Solo and transport commands for other MIDI controllers.
-- Save the MK2 Editor program and **Send To RAM** / the desired numbered hardware program; an editor file alone does not change the MIDI keyboard. For external arpeggiator sync select MIDI Clock output under LivePerformer System, set MK2 Arpeggiator CLOCK External, then press Play.
+- Save the MK2 Editor program and **Send To RAM** / the desired numbered hardware program; an editor file alone does not change the MIDI keyboard. For external arpeggiator sync select MIDI Clock output under LivePerformer System → MIDI testing, set MK2 Arpeggiator CLOCK External, then press Play.
 - Because controller latch state is separate from app/project state, a previously toggled pad can be out of sync after loading a new project. Toggle buttons set the received state explicitly rather than flipping state blindly; use the app UI to inspect current M/S state.
+
+## v0.4.4: separate MIDI/audio diagnostics, SAF filtering, SF3 import
+
+- System settings keeps everyday configuration; **MIDI 測試** and **音訊測試** open separate full-page screens. Back returns to System settings, then Performance. Existing project-specific MIDI routing remains under Project settings.
+- The MIDI test screen groups incoming events in **one read-only scrollable text area per connected device**, at most 50 events per device. Entries show channel/note/CC/pitch/program information, without timestamps or repeated device names. Clock and Active Sensing are suppressed from event logs; MIDI Clock output selection is still in the MIDI test screen.
+- Android SAF document selection uses specific MIME types rather than `*/*`. **MIME filtering depends on the document provider**: after selection, imported SoundFonts must have `.sf2`, `.sf3`, `.zip` or `.xz` suffixes (including `.tar.xz`), and external projects must have `.lvp` or `.lvpt` suffixes. Filename checks are authoritative even when a provider exposes unrelated octet-stream files.
+- ZIP and TAR.XZ archives can contain SF2 or SF3. XZ-compressed single SoundFont files are accepted as well. Archives are extracted into private storage with a 2 GB expanded-file cap. Internal SF2/SF3 filenames are detected, not written as paths.
+- SF3 uses the same RIFF/sfbk preset parser and FluidSynth loading path as SF2. **SF3 decoder support is not guaranteed in the existing Android AAR**: the importer probes a separate temporary native synth and *rejects/removes* an SF3 that the installed FluidSynth cannot decode, without corrupting the library. A real SF3 sample and device APK still require verification. SFZ is not supported and requires an additional sampler (such as sfizz).

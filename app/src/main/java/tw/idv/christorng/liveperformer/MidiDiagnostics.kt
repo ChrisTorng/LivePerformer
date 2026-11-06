@@ -1,11 +1,7 @@
 package tw.idv.christorng.liveperformer
 
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
-
 /** Render on the main/UI thread. Raw MIDI data remains unmodified for routing and recording. */
 object MidiDiagnostics {
-    private val timeFormat = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
     private val pitchClasses = arrayOf("C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B")
     private fun noteName(note: Int) =
         if (note in 0..127) pitchClasses[note % 12] + (note / 12 - 1) else "?"
@@ -30,7 +26,10 @@ object MidiDiagnostics {
                 else -> "Status 0x" + e.status.toString(16).uppercase()
             }
         }
-        return LocalTime.now().format(timeFormat) + " " + e.deviceName +
-            " #" + e.deviceId + "/" + e.port + ch + " · " + detail
+        return listOf(
+            if (e.port == 0) "" else "Port ${e.port + 1}",
+            ch.trim(),
+            detail
+        ).filter { it.isNotBlank() }.joinToString(" · ")
     }
 }

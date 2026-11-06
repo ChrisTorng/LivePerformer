@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** SoundFont -> available category -> real SF2 presets. Track maintenance is in the track menu. */
+/** SoundFont -> available category -> real SoundFont presets. Track maintenance is in the track menu. */
 @Composable
 fun SoundFontPicker(
     track: LoopTrackView?,
@@ -104,7 +104,7 @@ fun SoundFontPicker(
                     }
                 }
                 if (shownPresets.isEmpty()) Text(
-                    if (allPresets.isEmpty()) "正在讀取音色庫，或找不到 SF2 樂器預設。"
+                    if (allPresets.isEmpty()) "正在讀取音色庫，或找不到 SoundFont 樂器預設。"
                     else "此類別沒有適用於目前音軌的樂器。"
                 )
             }

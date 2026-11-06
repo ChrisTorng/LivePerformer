@@ -13,8 +13,8 @@ android {
         applicationId = "tw.idv.christorng.liveperformer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.4.3"
+        versionCode = 13
+        versionName = "0.4.4"
         ndk { abiFilters += listOf("arm64-v8a") }
         externalNativeBuild {
             cmake {

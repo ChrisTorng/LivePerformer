@@ -9,7 +9,7 @@ data class InstrumentPreset(val bank: Int, val program: Int, val name: String) {
         else "Bank $bank · ${program + 1}. $name"
 }
 
-/** Read only the SF2 INFO and preset headers; never load gigabyte sample payloads. */
+/** Read only the SoundFont SF2/SF3 INFO and preset headers; never load gigabyte sample payloads. */
 object SoundFontPresets {
     private val latin1 = Charsets.ISO_8859_1
     private fun RandomAccessFile.fourcc(): String {
@@ -30,7 +30,7 @@ object SoundFontPresets {
     data class Info(val title: String?, val presets: List<InstrumentPreset>)
 
     fun read(file: File): Info = RandomAccessFile(file, "r").use { raf ->
-        require(raf.length() >= 12 && raf.fourcc() == "RIFF") { "不是 SF2 RIFF 檔案" }
+        require(raf.length() >= 12 && raf.fourcc() == "RIFF") { "不是 SoundFont RIFF 檔案" }
         raf.u32()
         require(raf.fourcc() == "sfbk") { "無效的 SoundFont 格式" }
         var title: String? = null
@@ -40,14 +40,14 @@ object SoundFontPresets {
             val size = raf.u32()
             val payload = raf.filePointer
             val end = payload + size
-            require(size >= 0 && end <= raf.length()) { "SF2 區塊長度錯誤" }
+            require(size >= 0 && end <= raf.length()) { "SoundFont 區塊長度錯誤" }
             if (kind == "LIST" && size >= 4) {
                 val listType = raf.fourcc()
                 while (raf.filePointer + 8 <= end) {
                     val id = raf.fourcc()
                     val childSize = raf.u32()
                     val start = raf.filePointer
-                    require(start + childSize <= end) { "SF2 子區塊長度錯誤" }
+                    require(start + childSize <= end) { "SoundFont 子區塊長度錯誤" }
                     when {
                         listType == "INFO" && id == "INAM" && childSize in 1..4096 -> {
                             val b = ByteArray(childSize.toInt())
@@ -55,7 +55,7 @@ object SoundFontPresets {
                             title = name(b, 0, b.size).ifBlank { null }
                         }
                         listType == "pdta" && id == "phdr" -> {
-                            require(childSize % 38L == 0L) { "SF2 phdr 格式錯誤" }
+                            require(childSize % 38L == 0L) { "SoundFont phdr 格式錯誤" }
                             val count = (childSize / 38L - 1).coerceIn(0L, 5000L).toInt()
                             repeat(count) {
                                 val b = ByteArray(38)
