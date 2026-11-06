@@ -49,40 +49,42 @@ jobs:
           keytool -list -v -keystore "$KEY" -storepass android | grep 'SHA256:'
       - name: Test SF2 preset parser
         run: gradle :app:testDebugUnitTest --stacktrace --no-daemon
-      - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
-      - name: Verify APK packaging
+      - name: Build optimized release APK
+        run: gradle :app:assembleRelease --stacktrace --no-daemon
+      - name: Verify release APK packaging and signing
         run: |
-          APK=app/build/outputs/apk/debug/app-debug.apk
+          APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           unzip -Z1 "$APK" > apk-entries.txt
-          echo "APK native libraries and assets:"
+          echo "Release APK native libraries and assets:"
           grep -E '^(lib/arm64-v8a/|assets/)' apk-entries.txt | head -70 || true
           grep -Fxq 'lib/arm64-v8a/libliveperformer.so' apk-entries.txt || { echo "::error::Missing lib/arm64-v8a/libliveperformer.so"; exit 1; }
           grep -Fxq 'lib/arm64-v8a/libfluidsynth.so' apk-entries.txt || { echo "::error::Missing lib/arm64-v8a/libfluidsynth.so"; exit 1; }
           grep -Fxq 'assets/GeneralUser-GS.sf2' apk-entries.txt || { echo "::error::Missing assets/GeneralUser-GS.sf2"; exit 1; }
-      - name: Publish installable debug APK
+          $ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner verify --verbose "$APK"
+      - name: Publish optimized APK (development certificate)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk LivePerformer-v0.4.5-debug.apk
-          zip -9 LivePerformer-v0.4.5-debug.zip LivePerformer-v0.4.5-debug.apk
-          sha256sum LivePerformer-v0.4.5-debug.apk > LivePerformer-v0.4.5-debug.sha256
-          TAG=v0.4.5-dev
+          cp app/build/outputs/apk/release/app-release.apk LivePerformer-v0.4.6.apk
+          zip -9 LivePerformer-v0.4.6.zip LivePerformer-v0.4.6.apk
+          sha256sum LivePerformer-v0.4.6.apk > LivePerformer-v0.4.6.sha256
+          TAG=v0.4.6-dev
+          NOTES="Non-debuggable optimized Android release build (R8 + native -O3), signed with the publicly shared development-only certificate so previous test installations can update without clearing local data. NOT a production signing key. SF3 import converts Vorbis samples offline to SF2 using Android MediaCodec; decoded SF2 needs substantially more storage. Android device-level validation is still required."
           if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" LivePerformer-v0.4.5-debug.apk LivePerformer-v0.4.5-debug.zip LivePerformer-v0.4.5-debug.sha256 --clobber
+            gh release upload "$TAG" LivePerformer-v0.4.6.apk LivePerformer-v0.4.6.zip LivePerformer-v0.4.6.sha256 --clobber
           else
-            gh release create "$TAG" LivePerformer-v0.4.5-debug.apk LivePerformer-v0.4.5-debug.zip LivePerformer-v0.4.5-debug.sha256 \
+            gh release create "$TAG" LivePerformer-v0.4.6.apk LivePerformer-v0.4.6.zip LivePerformer-v0.4.6.sha256 \
               --target "$GITHUB_SHA" --prerelease \
-              --title "LivePerformer v0.4.5 Android debug" \
-              --notes "Experimental Android debug build. Hardware audio latency and USB MIDI not yet verified."
+              --title "LivePerformer v0.4.6 (optimized test APK)" \
+              --notes "$NOTES"
           fi
-      - name: Upload debug APK
-        if: always() && hashFiles('app/build/outputs/apk/debug/*.apk') != ''
+      - name: Upload optimized APK artifact
+        if: always() && hashFiles('app/build/outputs/apk/release/*.apk') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: LivePerformer-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: LivePerformer-optimized-apk
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 30
