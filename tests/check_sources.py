@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.4.3' in workflow and 'versionCode = 12' in gradle
+assert 'v0.4.4' in workflow and 'versionCode = 13' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -108,3 +108,18 @@ assert 'Restore persistent development signing key' in workflow
 assert 'applyMpkMiniMk2StagePreset' in looper
 assert 'play-stop' in looper and 'record-toggle' in looper and 'metronome-toggle' in looper
 print('PASS: PR APK stable signing and CC bank stage controls wired')
+
+# Independent diagnostics, per-device log isolation, file suffix safeguards, SF3 loader.
+routing_ui=(root/'app/src/main/java/tw/idv/christorng/liveperformer/MidiRoutingSettings.kt').read_text()
+types=(root/'app/src/main/java/tw/idv/christorng/liveperformer/ImportFileTypes.kt').read_text()
+native_kt=(root/'app/src/main/java/tw/idv/christorng/liveperformer/NativeEngine.kt').read_text()
+assert 'SettingsPage.MIDI_TEST' in activity and 'SettingsPage.AUDIO_TEST' in activity
+assert 'MidiSystemPanel(midiDevices, midiLogs' in activity
+assert 'messagesByDevice[device.id]' in routing_ui
+assert 'LocalTime.now()' not in (root/'app/src/main/java/tw/idv/christorng/liveperformer/MidiDiagnostics.kt').read_text()
+assert 'ImportFileTypes.soundFontMimeTypes' in activity and 'ImportFileTypes.projectMimeTypes' in activity
+assert 'isSoundFontFileName' in types and 'isProjectFileName' in types
+assert 'validateSoundFont' in native_kt and 'validateSoundFont' in native
+assert 'SF3' in importer and 'sf3' in store
+assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/ImportFileTypesTest.kt').exists()
+print('PASS: dedicated diagnostics, per-device logs, filtered SAF files and SF3 validation')
