@@ -167,6 +167,13 @@ public:
         // Never reopen from the audio callback; Kotlin coordinates a safe restart and SF2 reload.
         reconnectRequested_.store(true, std::memory_order_release);
     }
+    // Validate optional compressed SoundFont support on a worker thread, without
+    // swapping or touching the synth used by the real-time audio callback.
+    bool validateSoundFont(const char* filename) {
+        if (!running_.load(std::memory_order_acquire)) return false;
+        SynthInstance probe(&api_, sampleRate_.load(), gain_.load());
+        return probe.valid() && api_.sfload(probe.synth, filename, 0) >= 0;
+    }
     bool loadFonts(const std::vector<std::string>& filenames) {
         if (!api_.init() || !running_ || filenames.empty() || filenames.size() > 16) return false;
         // Prepare an entirely new multi-SF2 synth off-thread; no concurrent sfload on
@@ -328,6 +335,14 @@ JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_setGain
     engine().setGain(gain);
 }
 JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_stop(JNIEnv*, jobject) { engine().stop(); }
+JNIEXPORT jboolean JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_validateSoundFont(JNIEnv* env, jobject, jstring path) {
+    if (!path) return JNI_FALSE;
+    const char* cpath = env->GetStringUTFChars(path, nullptr);
+    if (!cpath) return JNI_FALSE;
+    const bool ok = engine().validateSoundFont(cpath);
+    env->ReleaseStringUTFChars(path, cpath);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
 JNIEXPORT jboolean JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_loadSf2(JNIEnv* env, jobject, jstring path) {
     const char* cpath = env->GetStringUTFChars(path, nullptr);
     const bool ok = engine().loadFont(cpath);
