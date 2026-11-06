@@ -13,8 +13,8 @@ android {
         applicationId = "tw.idv.christorng.liveperformer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "0.4.5"
+        versionCode = 15
+        versionName = "0.4.6"
         ndk { abiFilters += listOf("arm64-v8a") }
         externalNativeBuild {
             cmake {
@@ -32,6 +32,21 @@ android {
                 keyAlias = "liveperformer-dev"
                 keyPassword = "android"
             }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            // Release has no debugger and enables R8 optimizations, but it is signed
+            // with the SAME disposable development certificate so existing APKs upgrade.
+            // The shared certificate must never be used for a Play/production release.
+            isDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     buildFeatures {
