@@ -120,6 +120,6 @@ assert 'LocalTime.now()' not in (root/'app/src/main/java/tw/idv/christorng/livep
 assert 'ImportFileTypes.soundFontMimeTypes' in activity and 'ImportFileTypes.projectMimeTypes' in activity
 assert 'isSoundFontFileName' in types and 'isProjectFileName' in types
 assert 'validateSoundFont' in native_kt and 'validateSoundFont' in native
-assert 'SF3' in importer and 'sf3' in store
+assert 'SF3' in importer and 'soundFontExtension' in store
 assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/ImportFileTypesTest.kt').exists()
 print('PASS: dedicated diagnostics, per-device logs, filtered SAF files and SF3 validation')
