@@ -157,3 +157,9 @@ assert (root/'app/proguard-rules.pro').is_file()
 assert 'NativeEngine' in (root/'app/proguard-rules.pro').read_text()
 assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/Sf3ToSf2ConverterTest.kt').is_file()
 print('PASS: SF3 Vorbis import, editable names and R8-signed optimized release APK')
+
+assert 'needs: sf3-android' in workflow
+assert 'connectedDebugAndroidTest' in workflow
+assert 'VintageDreamsWaves-v2.sf3' in workflow
+assert (root/'app/src/androidTest/java/tw/idv/christorng/liveperformer/Sf3PlatformDecoderTest.kt').is_file()
+print('PASS: actual SF3 Vorbis conversion is required on Android emulator before APK release')
