@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.4.4' in workflow and 'versionCode = 13' in gradle
+assert 'v0.4.5' in workflow and 'versionCode = 14' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -123,3 +123,18 @@ assert 'validateSoundFont' in native_kt and 'validateSoundFont' in native
 assert 'SF3' in importer and 'soundFontExtension' in store
 assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/ImportFileTypesTest.kt').exists()
 print('PASS: dedicated diagnostics, per-device logs, filtered SAF files and SF3 validation')
+
+# Long-running SoundFont import must communicate actual stages, errors and background caveat.
+assert 'SoundFontImportProgress(' in importer
+assert 'onProgress(SoundFontImportProgress(' in importer
+assert 'UPDATE_INTERVAL_NS' in importer
+assert 'if (importing)' in activity and 'importOutcome?.let' in activity
+assert 'DialogProperties(dismissOnBackPress = false' in activity
+assert 'importProgress = SoundFontImportProgress(' in activity
+assert 'SoundFontImporter.extract(context, uri)' in activity
+assert 'importUiHandler.post' in activity
+assert 'picker.launch(arrayOf("*/*"))' in activity
+assert 'Android 可能回收背景程序' in activity
+assert 'library.remove(item)' in activity
+assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/SoundFontImportProgressTest.kt').exists()
+print('PASS: SoundFont progress stages, visible result, SAF fallback and background warning')
