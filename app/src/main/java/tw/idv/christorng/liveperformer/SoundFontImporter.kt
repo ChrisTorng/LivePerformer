@@ -99,16 +99,17 @@ object SoundFontImporter {
                     "檔案不是有效的 SoundFont（RIFF/sfbk）"
                 }
             }
-            target = File(context.filesDir, "$base.$extension")
-            check(part.renameTo(target)) { "無法儲存 SoundFont" }
+            val destination = File(context.filesDir, "$base.$extension")
+            target = destination
+            check(part.renameTo(destination)) { "無法儲存 SoundFont" }
             // The bundled Android FluidSynth may lack the optional Vorbis decoder.
             // Reject an unusable SF3 before placing it in the persistent library.
             if (extension == "sf3") {
-                check(NativeEngine.validateSoundFont(target.absolutePath)) {
+                check(NativeEngine.validateSoundFont(destination.absolutePath)) {
                     "此裝置的 FluidSynth 無法載入 SF3（可能缺少 Vorbis 解碼、檔案損壞或記憶體不足）"
                 }
             }
-            return target
+            return destination
         } catch (error: Exception) {
             part.delete()
             target?.delete()
