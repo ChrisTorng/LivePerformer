@@ -108,7 +108,7 @@ private fun audioOutputName(device: AudioDeviceInfo): String {
     return "$type · ${device.productName}（ID ${device.id}）"
 }
 
-private enum class SettingsPage { PROJECT, MIDI, SYSTEM }
+private enum class SettingsPage { PROJECT, MIDI, SYSTEM, MIDI_TEST, AUDIO_TEST }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -165,7 +165,7 @@ private fun PerformerScreen() {
     var audioStatus by remember { mutableStateOf("Audio: starting…") }
     var midiStatus by remember { mutableStateOf("USB MIDI: scanning…") }
     var midiDevices by remember { mutableStateOf(emptyList<MidiDeviceView>()) }
-    val midiLog = remember { mutableStateListOf<String>() }
+    val midiLogs = remember { mutableStateMapOf<Int, List<String>>() }
     var midiClockTarget by remember { mutableStateOf<Int?>(null) }
     val midiInputRef = remember { mutableStateOf<MidiInput?>(null) }
     var baseNote by remember { mutableIntStateOf(settings.getInt("baseNote", 48).coerceIn(0, 96)) }
@@ -302,6 +302,9 @@ private fun PerformerScreen() {
     ) { uri ->
         if (uri != null) scope.launch {
             try {
+                require(ImportFileTypes.isProjectFileName(ImportFileTypes.displayName(context, uri))) {
+                    "只接受 .lvp 專案與 .lvpt 範本"
+                }
                 val content = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.bufferedReader()?.use {
                         it.readText()
@@ -326,6 +329,9 @@ private fun PerformerScreen() {
             message = "檢查匯入音色…"
             try {
                 val item = withContext(Dispatchers.IO) {
+                    require(ImportFileTypes.isSoundFontFileName(ImportFileTypes.displayName(context, uri))) {
+                        "只接受 SF2、SF3、ZIP 或 XZ 音色檔"
+                    }
                     library.existingFor(uri) ?: run {
                         val file = SoundFontImporter.extract(context, uri)
                         library.register(uri, file)
@@ -364,6 +370,8 @@ private fun PerformerScreen() {
         val input = MidiInput(context, { deviceList ->
             uiHandler.post {
                 midiDevices = deviceList
+                midiLogs.keys.toList().filter { id -> deviceList.none { it.id == id } }
+                    .forEach { midiLogs.remove(it) }
                 midiStatus = if (deviceList.none { it.outputPorts > 0 }) "USB MIDI：尚未連接鍵盤"
                     else "USB MIDI：" + deviceList.filter { it.outputPorts > 0 }
                         .joinToString { it.name }
@@ -378,10 +386,11 @@ private fun PerformerScreen() {
             }
         }, { event ->
             looper.onExternalMidi(event)
-            // MIDI realtime Clock is too frequent for the five-line rolling monitor.
+            // Exclude high-rate Clock/Active Sensing from each device's rolling log.
             if (event.status != 0xf8 && event.status != 0xfe) uiHandler.post {
-                midiLog.add(0, MidiDiagnostics.format(event))
-                while (midiLog.size > 5) midiLog.removeAt(midiLog.lastIndex)
+                val previous = midiLogs[event.deviceId].orEmpty()
+                midiLogs[event.deviceId] =
+                    (previous + MidiDiagnostics.format(event)).takeLast(50)
             }
         })
         midiInputRef.value = input
@@ -596,7 +605,11 @@ private fun PerformerScreen() {
 
 
     BackHandler(enabled = settingsPage != null) {
-        settingsPage = if (settingsPage == SettingsPage.MIDI) SettingsPage.PROJECT else null
+        settingsPage = when (settingsPage) {
+            SettingsPage.MIDI -> SettingsPage.PROJECT
+            SettingsPage.MIDI_TEST, SettingsPage.AUDIO_TEST -> SettingsPage.SYSTEM
+            else -> null
+        }
     }
 
     pendingLoadAction?.let {
@@ -658,11 +671,21 @@ private fun PerformerScreen() {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = {
-                    settingsPage = if (settingsPage == SettingsPage.MIDI) SettingsPage.PROJECT else null
-                }) { Text(if (settingsPage == SettingsPage.MIDI) "‹ 專案" else "‹ 演奏") }
+                    settingsPage = when (settingsPage) {
+                        SettingsPage.MIDI -> SettingsPage.PROJECT
+                        SettingsPage.MIDI_TEST, SettingsPage.AUDIO_TEST -> SettingsPage.SYSTEM
+                        else -> null
+                    }
+                }) { Text(when (settingsPage) {
+                    SettingsPage.MIDI -> "‹ 專案"
+                    SettingsPage.MIDI_TEST, SettingsPage.AUDIO_TEST -> "‹ 系統"
+                    else -> "‹ 演奏"
+                }) }
                 Text(when (settingsPage) {
                     SettingsPage.PROJECT -> "專案設定"
                     SettingsPage.MIDI -> "MIDI 路由"
+                    SettingsPage.MIDI_TEST -> "MIDI 測試"
+                    SettingsPage.AUDIO_TEST -> "音訊測試"
                     else -> "系統設定"
                 }, style = MaterialTheme.typography.titleLarge)
             }
@@ -748,8 +771,7 @@ private fun PerformerScreen() {
                         DropdownMenuItem(text = { Text("從外部檔案匯入") }, onClick = {
                             showLoadChoices = false
                             guardedLoad {
-                                openJson.launch(arrayOf("application/octet-stream",
-                                    "application/json", "*/*"))
+                                openJson.launch(ImportFileTypes.projectMimeTypes)
                             }
                         })
                         DropdownMenuItem(text = { Text("內建示範（含錄製內容）") }, onClick = {
@@ -780,11 +802,45 @@ private fun PerformerScreen() {
                 modifier = Modifier.fillMaxWidth()) { Text("設定 MIDI 路由") }
             } else if (settingsPage == SettingsPage.MIDI) {
                 MidiRoutingSettings(loopState, looper, midiDevices, onMessage = { message = it })
-            } else {
-            MidiSystemPanel(midiDevices, midiLog, midiClockTarget, onClockTarget = { id ->
+            } else if (settingsPage == SettingsPage.MIDI_TEST) {
+            MidiSystemPanel(midiDevices, midiLogs, midiClockTarget, onClockTarget = { id ->
                 midiClockTarget = id
                 midiInputRef.value?.setClockTarget(id)
             })
+            } else if (settingsPage == SettingsPage.AUDIO_TEST) {
+            Text("音訊診斷", style = MaterialTheme.typography.titleMedium)
+            Text(audioStatus, style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { NativeEngine.midi(NativeEngine.TEST_PULSE, 0, 0, 0) }) { Text("播放測試音") }
+                OutlinedButton(onClick = { NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0) }) {
+                    Text("全部停止")
+                }
+            }
+            Text("麥克風回錄延遲（非 MIDI 按鍵延遲）", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = testCount == 3, onClick = { testCount = 3 },
+                    enabled = !measuring, label = { Text("3 次") })
+                FilterChip(selected = testCount == 5, onClick = { testCount = 5 },
+                    enabled = !measuring, label = { Text("5 次") })
+            }
+            Text(measurement, style = MaterialTheme.typography.bodySmall)
+            Button(enabled = !measuring && !loading, onClick = {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED) runMeasurement()
+                else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+            }) { Text(if (measuring) "量測中…" else "開始多次回錄量測") }
+            } else {
+            Text("測試與診斷", style = MaterialTheme.typography.titleMedium)
+            FlowRow(Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(onClick = { settingsPage = SettingsPage.MIDI_TEST }) {
+                    Text("MIDI 測試")
+                }
+                OutlinedButton(onClick = { settingsPage = SettingsPage.AUDIO_TEST }) {
+                    Text("音訊測試")
+                }
+            }
             Text("音色庫", style = MaterialTheme.typography.titleMedium)
             fonts.forEach { font ->
                 Row(verticalAlignment = Alignment.CenterVertically,
@@ -796,8 +852,8 @@ private fun PerformerScreen() {
                 }
             }
             OutlinedButton(enabled = !loading, onClick = {
-                picker.launch(arrayOf("*/*"))
-            }) { Text("匯入 SF2 / ZIP / XZ") }
+                picker.launch(ImportFileTypes.soundFontMimeTypes)
+            }) { Text("匯入 SF2 / SF3 / ZIP / XZ") }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
                     baseNote = (baseNote - 12).coerceAtLeast(0)
@@ -849,27 +905,6 @@ private fun PerformerScreen() {
                 Text(if (restarting) "重新連線中…" else "重新連接音訊")
             }
     
-            Text("音訊診斷", style = MaterialTheme.typography.titleMedium)
-            Text(audioStatus, style = MaterialTheme.typography.bodySmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { NativeEngine.midi(NativeEngine.TEST_PULSE, 0, 0, 0) }) { Text("播放測試音") }
-                OutlinedButton(onClick = { NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0) }) {
-                    Text("全部停止")
-                }
-            }
-            Text("麥克風回錄延遲（非 MIDI 按鍵延遲）", style = MaterialTheme.typography.titleSmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = testCount == 3, onClick = { testCount = 3 },
-                    enabled = !measuring, label = { Text("3 次") })
-                FilterChip(selected = testCount == 5, onClick = { testCount = 5 },
-                    enabled = !measuring, label = { Text("5 次") })
-            }
-            Text(measurement, style = MaterialTheme.typography.bodySmall)
-            Button(enabled = !measuring && !loading, onClick = {
-                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                    PackageManager.PERMISSION_GRANTED) runMeasurement()
-                else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-            }) { Text(if (measuring) "量測中…" else "開始多次回錄量測") }
             val version = remember {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
             }
