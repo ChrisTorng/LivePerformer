@@ -24,8 +24,8 @@ class SoundFontLibrary(private val context: Context) {
             val custom = prefs.getString("customTitle:" + file.name, null)
             val stored = runCatching { SoundFontPresets.read(file).title }.getOrNull()
             val sourceName = prefs.getString("source:" + file.name, null)
-                ?.substringBeforeLast(':')?.substringBeforeLast('.')
-                ?: file.name.removePrefix("imported-").substringBeforeLast('.')
+                ?.substringBeforeLast(':')
+                ?: file.name.removePrefix("imported-")
             val label = custom ?: InstrumentNaming.bestName(stored, sourceName)
             result += SoundFontItem(file.name, label, file, false)
         }
@@ -64,7 +64,7 @@ class SoundFontLibrary(private val context: Context) {
         val (sourceName, sourceSize) = sourceMetadata(uri)
         val title = InstrumentNaming.bestName(
             runCatching { SoundFontPresets.read(file).title }.getOrNull(),
-            sourceName.substringBeforeLast('.')
+            sourceName
         )
         prefs.edit()
             .putString("title:" + file.name, title)
