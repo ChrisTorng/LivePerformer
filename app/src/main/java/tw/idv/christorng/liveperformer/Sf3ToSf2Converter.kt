@@ -89,9 +89,25 @@ internal object Sf3ToSf2Converter {
         require(position >= 0 && position + 8 <= limit) { "SoundFont RIFF 區塊超出檔案範圍" }
         raf.seek(position)
         val result = Chunk(fourcc(raf), position, readU32(raf))
-        require(result.end <= limit && result.paddedEnd <= limit) { "SoundFont RIFF 區塊長度錯誤" }
+        require(result.end <= limit) { "SoundFont RIFF 區塊長度錯誤" }
         return result
     }
+    /** Some SF3 writers omit RIFF padding after odd-sized compressed chunks. */
+    private fun nextChunkOffset(raf: RandomAccessFile, chunk: Chunk, limit: Long): Long {
+        if (chunk.size % 2L == 0L || chunk.end == limit) return chunk.end
+        fun hasValidHeader(position: Long): Boolean {
+            if (position + 8 > limit) return false
+            raf.seek(position)
+            val id = fourcc(raf)
+            val size = readU32(raf)
+            return id.length == 4 && id.all { it.code in 32..126 } &&
+                size <= limit - position - 8
+        }
+        if (hasValidHeader(chunk.end)) return chunk.end
+        if (chunk.end + 1 == limit || hasValidHeader(chunk.end + 1)) return chunk.end + 1
+        error("SF3 壓縮樣本後的 RIFF 區塊邊界錯誤")
+    }
+
     private fun children(raf: RandomAccessFile, list: Chunk): List<Chunk> {
         require(list.id == "LIST" && list.size >= 4) { "SoundFont LIST 格式錯誤" }
         val result = mutableListOf<Chunk>()
@@ -99,7 +115,7 @@ internal object Sf3ToSf2Converter {
         while (pos + 8 <= list.end) {
             val child = chunkAt(raf, pos, list.end)
             result += child
-            pos = child.paddedEnd
+            pos = nextChunkOffset(raf, child, list.end)
         }
         require(pos == list.end) { "SoundFont LIST 尾端不完整" }
         return result
@@ -136,7 +152,7 @@ internal object Sf3ToSf2Converter {
             while (cursor + 8 <= riffEnd) {
                 val c = chunkAt(input, cursor, riffEnd)
                 top += c
-                cursor = c.paddedEnd
+                cursor = nextChunkOffset(input, c, riffEnd)
             }
             require(cursor == riffEnd) { "SF3 主區塊長度錯誤" }
             fun listOfType(type: String): Chunk {
@@ -249,7 +265,8 @@ internal object Sf3ToSf2Converter {
                             }
                             else -> {
                                 val newStart = out.filePointer
-                                copy(input, out, topChunk.position, topChunk.paddedEnd - topChunk.position)
+                                copy(input, out, topChunk.position,
+                                    nextChunkOffset(input, topChunk, riffEnd) - topChunk.position)
                                 if (topChunk == info) {
                                     val resume = out.filePointer
                                     out.seek(newStart + (ifil.data - info.position))
