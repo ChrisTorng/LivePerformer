@@ -390,7 +390,7 @@ private fun PerformerScreen() {
             if (event.status != 0xf8 && event.status != 0xfe) uiHandler.post {
                 val previous = midiLogs[event.deviceId].orEmpty()
                 midiLogs[event.deviceId] =
-                    (previous + MidiDiagnostics.format(event)).takeLast(50)
+                    (listOf(MidiDiagnostics.format(event)) + previous).take(50)
             }
         })
         midiInputRef.value = input
