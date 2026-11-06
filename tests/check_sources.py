@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.4.5' in workflow and 'versionCode = 14' in gradle
+assert 'v0.4.6' in workflow and 'versionCode = 15' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -138,3 +138,28 @@ assert 'Android 可能回收背景程序' in activity
 assert 'library.remove(item)' in activity
 assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/SoundFontImportProgressTest.kt').exists()
 print('PASS: SoundFont progress stages, visible result, SAF fallback and background warning')
+
+# SF3 Android Vorbis compatibility conversion must use platform MediaCodec
+# outside the audio callback; the APK must be a non-debuggable optimized release.
+sf3=(root/'app/src/main/java/tw/idv/christorng/liveperformer/Sf3ToSf2Converter.kt').read_text()
+names=(root/'app/src/main/java/tw/idv/christorng/liveperformer/InstrumentNaming.kt').read_text()
+assert 'MediaExtractor' in sf3 and 'MediaCodec' in sf3
+assert 'VorbisSampleDecoder' in sf3 and 'putU32(table' in sf3
+assert 'Sf3ToSf2Converter.convert' in importer
+assert 'fun rename(' in store and 'customTitle:' in store
+assert 'renameFontCandidate' in activity and 'renameFontValue' in activity
+assert 'sound *bank' in names
+assert 'assembleRelease' in workflow and 'app-release.apk' in workflow
+assert 'isMinifyEnabled = true' in gradle and 'isDebuggable = false' in gradle
+assert 'isShrinkResources = true' in gradle
+assert 'signingConfig = signingConfigs.getByName("debug")' in gradle
+assert (root/'app/proguard-rules.pro').is_file()
+assert 'NativeEngine' in (root/'app/proguard-rules.pro').read_text()
+assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/Sf3ToSf2ConverterTest.kt').is_file()
+print('PASS: SF3 Vorbis import, editable names and R8-signed optimized release APK')
+
+assert 'needs: sf3-android' in workflow
+assert 'connectedDebugAndroidTest' in workflow
+assert 'VintageDreamsWaves-v2.sf3' in workflow
+assert (root/'app/src/androidTest/java/tw/idv/christorng/liveperformer/Sf3PlatformDecoderTest.kt').is_file()
+print('PASS: actual SF3 Vorbis conversion is required on Android emulator before APK release')

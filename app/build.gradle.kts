@@ -13,9 +13,15 @@ android {
         applicationId = "tw.idv.christorng.liveperformer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "0.4.5"
-        ndk { abiFilters += listOf("arm64-v8a") }
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        versionCode = 15
+        versionName = "0.4.6"
+        ndk {
+            // Normal phone builds stay arm64; x86_64 is opt-in only for Android emulator CI.
+            abiFilters += listOf(
+                providers.gradleProperty("sf3EmulatorAbi").orNull ?: "arm64-v8a"
+            )
+        }
         externalNativeBuild {
             cmake {
                 cppFlags += listOf("-std=c++17", "-O3", "-fexceptions")
@@ -32,6 +38,21 @@ android {
                 keyAlias = "liveperformer-dev"
                 keyPassword = "android"
             }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            // Release has no debugger and enables R8 optimizations, but it is signed
+            // with the SAME disposable development certificate so existing APKs upgrade.
+            // The shared certificate must never be used for a Play/production release.
+            isDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     buildFeatures {
@@ -61,6 +82,8 @@ dependencies {
     // Provides libfluidsynth.so for the NDK-side dynamically loaded API.
     implementation("net.volcanomobile.fluidsynth-android:fluidsynth-android:2.4.6")
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
 }
 
 val gmSf2 = layout.projectDirectory.file("src/main/assets/GeneralUser-GS.sf2").asFile

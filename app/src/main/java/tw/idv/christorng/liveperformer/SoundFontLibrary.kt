@@ -21,12 +21,12 @@ class SoundFontLibrary(private val context: Context) {
         directory.listFiles()?.filter {
             it.isFile && it.name.startsWith("imported-") && ImportFileTypes.soundFontExtension(it.name) != null
         }?.sortedBy { it.name }?.forEach { file ->
-            val stored = prefs.getString("title:" + file.name, null)
-                ?: runCatching { SoundFontPresets.read(file).title }.getOrNull()
+            val custom = prefs.getString("customTitle:" + file.name, null)
+            val stored = runCatching { SoundFontPresets.read(file).title }.getOrNull()
             val sourceName = prefs.getString("source:" + file.name, null)
-                ?.substringBeforeLast(':')?.substringBeforeLast('.')
-                ?: file.name.removePrefix("imported-").substringBeforeLast('.')
-            val label = InstrumentNaming.bestName(stored, sourceName)
+                ?.substringBeforeLast(':')
+                ?: file.name.removePrefix("imported-")
+            val label = custom ?: InstrumentNaming.bestName(stored, sourceName)
             result += SoundFontItem(file.name, label, file, false)
         }
         return result
@@ -64,7 +64,7 @@ class SoundFontLibrary(private val context: Context) {
         val (sourceName, sourceSize) = sourceMetadata(uri)
         val title = InstrumentNaming.bestName(
             runCatching { SoundFontPresets.read(file).title }.getOrNull(),
-            sourceName.substringBeforeLast('.')
+            sourceName
         )
         prefs.edit()
             .putString("title:" + file.name, title)
@@ -73,11 +73,26 @@ class SoundFontLibrary(private val context: Context) {
         return SoundFontItem(file.name, title, file, false)
     }
 
+    /** Custom display label is independent of the original source or embedded SoundFont name. */
+    fun rename(item: SoundFontItem, requested: String): SoundFontItem {
+        require(!item.isBundled && item.id.startsWith("imported-")) {
+            "內建音色庫名稱不能修改"
+        }
+        require(item.file.isFile && item.file.canonicalFile.parentFile == directory.canonicalFile) {
+            "找不到指定的音色庫"
+        }
+        val label = requested.trim().replace(Regex("[\\r\\n\\t]+"), " ").take(90)
+        require(label.isNotBlank()) { "請輸入音色庫名稱" }
+        prefs.edit().putString("customTitle:" + item.id, label).apply()
+        return item.copy(title = label)
+    }
+
     fun remove(item: SoundFontItem): Boolean {
         if (item.isBundled || !item.id.startsWith("imported-")) return false
         if (!item.file.canonicalFile.parentFile.equals(directory.canonicalFile)) return false
         if (!item.file.delete()) return false
-        prefs.edit().remove("title:" + item.id).remove("source:" + item.id).apply()
+        prefs.edit().remove("title:" + item.id).remove("source:" + item.id)
+            .remove("customTitle:" + item.id).apply()
         return true
     }
 }

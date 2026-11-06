@@ -2,17 +2,17 @@ package tw.idv.christorng.liveperformer
 
 /** Resolve generic SF2 INFO/preset names using the source file name and instrument clues. */
 object InstrumentNaming {
-    fun clean(value: String): String = value
-        .substringAfterLast('/').substringAfterLast('\\')
-        .substringBeforeLast(".sf2", missingDelimiterValue = value)
-        .replace(Regex("[_\\-]+"), " ")
-        .replace(Regex("\\s+"), " ")
-        .trim()
+    fun clean(value: String): String {
+        val simple = value.substringAfterLast('/').substringAfterLast('\\')
+            .replace(Regex("(?i)(\\.sf[23]|\\.tar\\.xz|\\.zip|\\.xz)$"), "")
+        return simple.replace(Regex("[_\\-]+"), " ")
+            .replace(Regex("\\s+"), " ").trim()
+    }
 
     private fun generic(value: String): Boolean {
         val name = clean(value).lowercase()
         return name.isBlank() || name.matches(Regex(
-            "(instrument|preset|soundfont|sf2|untitled|default|sample|bank)( *[0-9]+)?"
+            "(instrument|preset|soundfont|sound *bank|soundfont *bank|sf2|sf3|untitled|default|sample|bank)( *[0-9]+)?"
         ))
     }
 

@@ -1,4 +1,4 @@
-# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.5)
+# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.6)
 
 **Status: early source prototype, not yet device-verified.** Initial target: Samsung Galaxy A25 5G, USB MIDI keyboard, wired 3.5 mm headphones. v0.2.1 adds an ergonomic single-screen interface and v0.2 includes an experimental MIDI-only loop recorder; physical device performance remains unverified.
 
@@ -118,3 +118,11 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - Success and failure are both displayed in a visible result dialog. If the new sound bank cannot be activated, its newly imported copy is removed to avoid poisoning subsequent startup; the original file remains unchanged.
 - The Android Documents provider may label `.sf2` and `.sf3` files with unusual MIME types, hiding them from the filtered SAF picker. The **顯示所有檔案** fallback exposes them while application-side extension validation still rejects unrelated files.
 - The import dialog warns about backgrounding: switching to another app does not intrinsically cancel the import while the current process survives, but Android can kill a background process. No background service or resumable import is implemented. Avoid switching apps or rotating the device while importing.
+
+## v0.4.6 — Android SF3 compatibility, SoundFont labels and optimized APK
+
+- Root cause: the prebuilt `fluidsynth-android` AAR omits libsndfile, so its native SF3 Vorbis sample decoding does **not** work. Installing a random Google Play codec cannot add support to that native library.
+- As an immediate in-app compatibility path, **SF3 files are converted once during import to an SF2 PCM file** using Android's built-in Vorbis MediaExtractor/MediaCodec (no third-party downloaded codec). The converter reconstructs the SoundFont RIFF structures, updates SF3 compressed-sample offsets/loops and strips the compression flag. The converted SF2 is validated by FluidSynth before registration; broken partial copies are deleted. This keeps real-time rendering unmodified but consumes considerably more storage during and after import; a large SF3 may expand to hundreds of MiB or more and cannot exceed the current 2 GB SoundFont limit. This is not equivalent to native compressed-SF3 loading and still needs physical-device testing.
+- Imported SoundFont titles now use the **source filename** when embedded `INAM` contains generic titles such as `Sound Bank`. Each imported bank also has a **更名** button, saved as a display-only preference; the original file and MIDI presets are untouched. Old generic labels automatically use their original source filename if available.
+- Android CI builds `assembleRelease` (R8 minified, resource shrinking, no debugger), verifies the native libraries and APK signature, and publishes `LivePerformer-v0.4.6.apk` rather than a debug APK. For upgrading the existing private test installation, this optimized release is deliberately signed with the **same publicly available disposable development certificate**, which is **not production signing**. Real production distribution will need a securely stored distinct signing key and may not update in place.
+- Tests cover SF3 RIFF sample-table conversion through an injected decoder (no device-level Vorbis test yet), source-name fallback, plus established Kotlin/native tests.
