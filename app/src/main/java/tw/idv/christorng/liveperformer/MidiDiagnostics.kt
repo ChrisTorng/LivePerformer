@@ -26,7 +26,10 @@ object MidiDiagnostics {
                 else -> "Status 0x" + e.status.toString(16).uppercase()
             }
         }
-        return (if (e.port == 0) "" else "Port ${e.port + 1} · ") +
-            ch.trimStart() + " · " + detail
+        return listOf(
+            if (e.port == 0) "" else "Port ${e.port + 1}",
+            ch.trim(),
+            detail
+        ).filter { it.isNotBlank() }.joinToString(" · ")
     }
 }
