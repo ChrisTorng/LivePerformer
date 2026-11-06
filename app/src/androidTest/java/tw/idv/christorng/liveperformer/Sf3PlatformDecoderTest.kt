@@ -23,9 +23,9 @@ class Sf3PlatformDecoderTest {
                 }
             assertTrue(input.length() >= 100000)
             val progress = mutableListOf<String>()
-            Sf3ToSf2Converter.convert(input, output) { state ->
+            Sf3ToSf2Converter.convert(input, output, onProgress = { state ->
                 if (progress.size < 5000) progress.add(state.stage)
-            }
+            })
             assertTrue("Converted SF2 must exist", output.isFile)
             assertTrue("Decoded PCM expands source", output.length() > input.length())
             assertTrue("At least one Vorbis sample must be decoded",
