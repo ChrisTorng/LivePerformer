@@ -9,7 +9,7 @@ data class SoundFontItem(val id: String, val title: String, val file: File, val 
     val sizeMiB: Long get() = file.length() / (1024 * 1024)
 }
 
-/** Persistent SF2 registry. Supports files imported with v0.1.2 without re-importing them. */
+/** Persistent SF2/SF3 registry. Supports files imported with v0.1.2 without re-importing them. */
 class SoundFontLibrary(private val context: Context) {
     private val prefs = context.getSharedPreferences("soundfont-library", Context.MODE_PRIVATE)
     private val directory get() = context.filesDir
@@ -19,7 +19,7 @@ class SoundFontLibrary(private val context: Context) {
         val bundled = File(directory, "GeneralUser-GS.sf2")
         if (bundled.isFile) result += SoundFontItem("gm", "GeneralUser GS", bundled, true)
         directory.listFiles()?.filter {
-            it.isFile && it.name.startsWith("imported-") && it.name.endsWith(".sf2", true)
+            it.isFile && it.name.startsWith("imported-") && ImportFileTypes.soundFontExtension(it.name) != null
         }?.sortedBy { it.name }?.forEach { file ->
             val stored = prefs.getString("title:" + file.name, null)
                 ?: runCatching { SoundFontPresets.read(file).title }.getOrNull()
