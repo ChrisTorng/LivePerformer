@@ -13,9 +13,15 @@ android {
         applicationId = "tw.idv.christorng.liveperformer"
         minSdk = 26
         targetSdk = 35
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 15
         versionName = "0.4.6"
-        ndk { abiFilters += listOf("arm64-v8a") }
+        ndk {
+            // Normal phone builds stay arm64; x86_64 is opt-in only for Android emulator CI.
+            abiFilters += listOf(
+                providers.gradleProperty("sf3EmulatorAbi").orNull ?: "arm64-v8a"
+            )
+        }
         externalNativeBuild {
             cmake {
                 cppFlags += listOf("-std=c++17", "-O3", "-fexceptions")
@@ -76,6 +82,8 @@ dependencies {
     // Provides libfluidsynth.so for the NDK-side dynamically loaded API.
     implementation("net.volcanomobile.fluidsynth-android:fluidsynth-android:2.4.6")
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
 }
 
 val gmSf2 = layout.projectDirectory.file("src/main/assets/GeneralUser-GS.sf2").asFile
