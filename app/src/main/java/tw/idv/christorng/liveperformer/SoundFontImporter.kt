@@ -134,9 +134,22 @@ object SoundFontImporter {
             target = destination
             check(part.renameTo(destination)) { "無法儲存 SoundFont" }
             if (extension == "sf3") {
-                onProgress(SoundFontImportProgress("正在測試 SF3 解碼及音色載入", destination.length()))
-                check(NativeEngine.validateSoundFont(destination.absolutePath)) {
-                    "SF3 載入失敗：目前 Android FluidSynth 可能缺少 Vorbis 解碼功能，或檔案損壞／記憶體不足。可先試用 SF2。"
+                val converted = File(context.filesDir, "$base.sf2")
+                try {
+                    onProgress(SoundFontImportProgress(
+                        "SF3 需要離線解壓為 SF2（需額外儲存空間）"))
+                    Sf3ToSf2Converter.convert(destination, converted, onProgress)
+                    onProgress(SoundFontImportProgress("驗證轉換後的 SF2", converted.length()))
+                    check(NativeEngine.validateSoundFont(converted.absolutePath)) {
+                        "轉換完成，但 FluidSynth 無法載入 SF2（檔案可能損壞或記憶體不足）"
+                    }
+                    target = converted
+                    destination.delete()
+                    onProgress(SoundFontImportProgress("SF3 已轉換為 SF2，準備啟用音色庫"))
+                    return converted
+                } catch (error: Exception) {
+                    converted.delete()
+                    throw error
                 }
             }
             onProgress(SoundFontImportProgress("完成檔案匯入，準備音源引擎", destination.length()))
