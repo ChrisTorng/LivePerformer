@@ -163,6 +163,8 @@ private fun PerformerScreen() {
     var renameValue by remember { mutableStateOf("") }
     var openTrackMenu by remember { mutableStateOf<Int?>(null) }
     var deleteCandidate by remember { mutableStateOf<SoundFontItem?>(null) }
+    var renameFontCandidate by remember { mutableStateOf<SoundFontItem?>(null) }
+    var renameFontValue by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
     var importProgress by remember { mutableStateOf<SoundFontImportProgress?>(null) }
@@ -372,7 +374,11 @@ private fun PerformerScreen() {
                     if (loaded) {
                         importOutcome = SoundFontImportOutcome(
                             if (created) "音色匯入完成" else "音色庫已載入",
-                            "${item.title} 已可供選擇與演奏。")
+                            "${item.title} 已可供選擇與演奏。" +
+                                if (item.file.extension.equals("sf2", ignoreCase = true) &&
+                                    ImportFileTypes.displayName(context, uri).endsWith(".sf3", ignoreCase = true))
+                                    "\\n此 SF3 已在匯入時以 Android Vorbis 解碼轉為 SF2，App 內檔案會比原始 SF3 大。"
+                                else "")
                     } else {
                         if (created) {
                             withContext(Dispatchers.IO) { library.remove(item) }
@@ -634,6 +640,34 @@ private fun PerformerScreen() {
         )
     }
 
+    renameFontCandidate?.let { candidate ->
+        AlertDialog(
+            onDismissRequest = { renameFontCandidate = null },
+            title = { Text("重新命名音色庫") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = renameFontValue, onValueChange = { renameFontValue = it.take(90) },
+                        singleLine = true, label = { Text("顯示名稱") }
+                    )
+                    Text("只修改 LivePerformer 中的顯示名稱，不會更改原始音色檔、預設音色或其他專案資料。",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = renameFontValue.isNotBlank(), onClick = {
+                    try {
+                        val renamed = library.rename(candidate, renameFontValue)
+                        val index = fonts.indexOfFirst { it.id == candidate.id }
+                        if (index >= 0) fonts[index] = renamed
+                        message = "音色庫已重新命名：${renamed.title}"
+                        renameFontCandidate = null
+                    } catch (ex: Exception) { message = "重新命名失敗：${ex.message}" }
+                }) { Text("儲存") }
+            },
+            dismissButton = { TextButton(onClick = { renameFontCandidate = null }) { Text("取消") } }
+        )
+    }
     deleteCandidate?.let { candidate ->
         AlertDialog(
             onDismissRequest = { deleteCandidate = null },
@@ -944,6 +978,10 @@ private fun PerformerScreen() {
                     horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text(font.title, modifier = Modifier.weight(1f), maxLines = 1)
                     if (!font.isBundled) {
+                        TextButton(onClick = {
+                            renameFontCandidate = font
+                            renameFontValue = font.title
+                        }) { Text("更名") }
                         TextButton(onClick = { deleteCandidate = font }) { Text("刪除") }
                     }
                 }
