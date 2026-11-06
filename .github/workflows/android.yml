@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   android:
+    needs: sf3-android
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -88,3 +89,41 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 30
+
+  sf3-android:
+    name: Real SF3 decoding on Android emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Install native dependencies
+        run: sdkmanager --install 'platforms;android-37.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Download real SF3 Vorbis test fixture
+        run: |
+          mkdir -p app/src/androidTest/assets
+          curl -fsSL --retry 3 --max-time 100 \
+            https://raw.githubusercontent.com/VolcanoMobile/fluidsynth-android/master/sf2/VintageDreamsWaves-v2.sf3 \
+            -o app/src/androidTest/assets/VintageDreamsWaves-v2.sf3
+          test $(stat -c%s app/src/androidTest/assets/VintageDreamsWaves-v2.sf3) -gt 100000
+      - name: Enable hardware acceleration
+        run: |
+          sudo chmod 666 /dev/kvm
+      - name: Decode actual SF3 on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          disable-animations: true
+          script: gradle :app:connectedDebugAndroidTest -Psf3EmulatorAbi=x86_64 --stacktrace --no-daemon
