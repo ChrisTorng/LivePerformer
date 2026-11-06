@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -110,6 +111,8 @@ private fun audioOutputName(device: AudioDeviceInfo): String {
 
 private enum class SettingsPage { PROJECT, MIDI, SYSTEM, MIDI_TEST, AUDIO_TEST }
 
+private data class SoundFontImportOutcome(val title: String, val details: String)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PerformerScreen() {
@@ -161,6 +164,10 @@ private fun PerformerScreen() {
     var openTrackMenu by remember { mutableStateOf<Int?>(null) }
     var deleteCandidate by remember { mutableStateOf<SoundFontItem?>(null) }
     var loading by remember { mutableStateOf(false) }
+    var importing by remember { mutableStateOf(false) }
+    var importProgress by remember { mutableStateOf<SoundFontImportProgress?>(null) }
+    var importOutcome by remember { mutableStateOf<SoundFontImportOutcome?>(null) }
+    val importUiHandler = remember { Handler(Looper.getMainLooper()) }
     var message by remember { mutableStateOf("啟動音訊中…") }
     var audioStatus by remember { mutableStateOf("Audio: starting…") }
     var midiStatus by remember { mutableStateOf("USB MIDI: scanning…") }
@@ -181,8 +188,8 @@ private fun PerformerScreen() {
     var measurement by remember { mutableStateOf("尚未量測。需以喇叭或有線 Loopback 讓麥克風收到測試訊號。") }
 
     /** Rebuild the synth off the audio thread with every imported font loaded at once. */
-    suspend fun activate(item: SoundFontItem? = null) {
-        if (loading) return
+    suspend fun activate(item: SoundFontItem? = null): Boolean {
+        if (loading) return false
         loading = true
         message = "載入音色庫…"
         try {
@@ -193,7 +200,8 @@ private fun PerformerScreen() {
                 NativeEngine.loadFontCollection(all.map { it.file.absolutePath }.toTypedArray())
             }
             if (!ok) {
-                message = "載入失敗；保留之前音色庫"
+                message = "音色庫載入失敗：FluidSynth 無法載入全部音色（可能格式不相容或記憶體不足）；保留原有音色"
+                return false
             } else {
                 fonts.clear()
                 fonts.addAll(all)
@@ -214,8 +222,10 @@ private fun PerformerScreen() {
                 })
                 message = "音色庫已就緒（${all.size}）"
             }
+            return true
         } catch (ex: Exception) {
             message = "音色庫載入失敗：${ex.message}"
+            return false
         } finally { loading = false }
     }
 
@@ -232,7 +242,7 @@ private fun PerformerScreen() {
         if (restarting) return
         restarting = true
         try {
-            while (loading || measuring) delay(100)
+            while (loading || importing || measuring) delay(100)
             keyboard.allNotesOff()
             val ready = withContext(Dispatchers.IO) { NativeEngine.restart(requestedOutputId) }
             if (!ready) {
@@ -325,21 +335,64 @@ private fun PerformerScreen() {
         if (granted) runMeasurement() else measurement = "未授予麥克風權限，無法回錄。"
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null && !loading) scope.launch {
-            message = "檢查匯入音色…"
-            try {
-                val item = withContext(Dispatchers.IO) {
-                    require(ImportFileTypes.isSoundFontFileName(ImportFileTypes.displayName(context, uri))) {
-                        "只接受 SF2、SF3、ZIP 或 XZ 音色檔"
+        if (uri != null && !loading && !importing) {
+            importing = true
+            importOutcome = null
+            importProgress = SoundFontImportProgress("準備匯入音色檔")
+            scope.launch {
+                var newItem: SoundFontItem? = null
+                try {
+                    val (item, created) = withContext(Dispatchers.IO) {
+                        val fileName = ImportFileTypes.displayName(context, uri)
+                        require(ImportFileTypes.isSoundFontFileName(fileName)) {
+                            "只接受 .sf2、.sf3、.zip 或 .xz 檔案，您選擇的是：$fileName"
+                        }
+                        val existing = library.existingFor(uri)
+                        if (existing != null) {
+                            existing to false
+                        } else {
+                            val importedFile = SoundFontImporter.extract(context, uri) { step ->
+                                importUiHandler.post { importProgress = step }
+                            }
+                            try {
+                                importUiHandler.post {
+                                    importProgress = SoundFontImportProgress("建立音色庫索引")
+                                }
+                                library.register(uri, importedFile) to true
+                            } catch (ex: Exception) {
+                                importedFile.delete()
+                                throw ex
+                            }
+                        }
                     }
-                    library.existingFor(uri) ?: run {
-                        val file = SoundFontImporter.extract(context, uri)
-                        library.register(uri, file)
+                    if (created) newItem = item
+                    importProgress = SoundFontImportProgress(
+                        "載入全部音色庫到 FluidSynth（可能需要較長時間）")
+                    val loaded = activate(item)
+                    if (loaded) {
+                        importOutcome = SoundFontImportOutcome(
+                            if (created) "音色匯入完成" else "音色庫已載入",
+                            "${item.title} 已可供選擇與演奏。")
+                    } else {
+                        if (created) {
+                            withContext(Dispatchers.IO) { library.remove(item) }
+                            newItem = null
+                        }
+                        importOutcome = SoundFontImportOutcome(
+                            "音色載入失敗",
+                            message + if (created) "\n新匯入的 App 內副本已移除，原始檔案不受影響。" else "")
                     }
+                } catch (ex: Exception) {
+                    val failedItem = newItem
+                    if (failedItem != null) {
+                        withContext(Dispatchers.IO) { library.remove(failedItem) }
+                    }
+                    message = "匯入失敗：${ex.message}"
+                    importOutcome = SoundFontImportOutcome("匯入失敗", message)
+                } finally {
+                    importing = false
+                    importProgress = null
                 }
-                activate(item)
-            } catch (ex: Exception) {
-                message = "匯入失敗：${ex.message}"
             }
         }
     }
@@ -643,6 +696,50 @@ private fun PerformerScreen() {
         )
     }
 
+    if (importing) {
+        val progress = importProgress ?: SoundFontImportProgress("準備匯入音色檔")
+        AlertDialog(
+            onDismissRequest = {},
+            properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+            title = { Text("正在匯入 SoundFont") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(progress.stage, style = MaterialTheme.typography.bodyMedium)
+                    val fraction = progress.fraction
+                    if (fraction != null) {
+                        LinearProgressIndicator(
+                            progress = { fraction },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text("${(fraction * 100).toInt()}% · " +
+                            String.format(java.util.Locale.US, "%.1f", progress.completedBytes / 1048576.0) +
+                            " / " + String.format(java.util.Locale.US, "%.1f",
+                                (progress.totalBytes ?: 0L) / 1048576.0) + " MiB")
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        if (progress.completedBytes > 0L) {
+                            Text("已處理 " + String.format(java.util.Locale.US,
+                                "%.1f", progress.completedBytes / 1048576.0) +
+                                " MiB（解壓縮大小未知，無法計算百分比）",
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    Text("請保留 LivePerformer 在前景直到完成。切換其他 App 通常仍會繼續，但 Android 可能回收背景程序；此版本不支援中斷後續傳。",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {}
+        )
+    }
+    importOutcome?.let { result ->
+        AlertDialog(
+            onDismissRequest = { importOutcome = null },
+            title = { Text(result.title) },
+            text = { Text(result.details) },
+            confirmButton = { TextButton(onClick = { importOutcome = null }) { Text("關閉") } }
+        )
+    }
+
     if (showInstrumentPicker && (addingInstrument || selectedTrack != null)) {
         SoundFontPicker(
             track = if (addingInstrument) null else selectedTrack,
@@ -851,9 +948,17 @@ private fun PerformerScreen() {
                     }
                 }
             }
-            OutlinedButton(enabled = !loading, onClick = {
+            OutlinedButton(enabled = !loading && !importing, onClick = {
                 picker.launch(ImportFileTypes.soundFontMimeTypes)
             }) { Text("匯入 SF2 / SF3 / ZIP / XZ") }
+            TextButton(enabled = !loading && !importing,
+                onClick = { picker.launch(arrayOf("*/*")) }) {
+                Text("找不到 SF2／SF3 檔案？顯示所有檔案")
+            }
+            Text("Android 檔案選擇器可能將 SoundFont 歸類為其他類型；" +
+                "顯示所有檔案仍會於匯入前檢查副檔名。",
+                style = MaterialTheme.typography.bodySmall)
+            Text(message, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
                     baseNote = (baseNote - 12).coerceAtLeast(0)
