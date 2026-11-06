@@ -1,4 +1,4 @@
-# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.4)
+# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.5)
 
 **Status: early source prototype, not yet device-verified.** Initial target: Samsung Galaxy A25 5G, USB MIDI keyboard, wired 3.5 mm headphones. v0.2.1 adds an ergonomic single-screen interface and v0.2 includes an experimental MIDI-only loop recorder; physical device performance remains unverified.
 
@@ -110,3 +110,11 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - Android SAF document selection uses specific MIME types rather than `*/*`. **MIME filtering depends on the document provider**: after selection, imported SoundFonts must have `.sf2`, `.sf3`, `.zip` or `.xz` suffixes (including `.tar.xz`), and external projects must have `.lvp` or `.lvpt` suffixes. Filename checks are authoritative even when a provider exposes unrelated octet-stream files.
 - ZIP and TAR.XZ archives can contain SF2 or SF3. XZ-compressed single SoundFont files are accepted as well. Archives are extracted into private storage with a 2 GB expanded-file cap. Internal SF2/SF3 filenames are detected, not written as paths.
 - SF3 uses the same RIFF/sfbk preset parser and FluidSynth loading path as SF2. **SF3 decoder support is not guaranteed in the existing Android AAR**: the importer probes a separate temporary native synth and *rejects/removes* an SF3 that the installed FluidSynth cannot decode, without corrupting the library. A real SF3 sample and device APK still require verification. SFZ is not supported and requires an additional sampler (such as sfizz).
+
+## v0.4.5: Observable SoundFont imports and lifecycle warning
+
+- Importing SF2/SF3/ZIP/XZ now displays a non-dismissable progress dialog with the current operation. Plain SF2/SF3 copying uses file-size-based percentage when the Android document provider reports a size; compressed archives show *extracted* MiB and an indeterminate progress indicator because the final decompressed size cannot be known in advance.
+- Import stages include copying/unpacking, RIFF header verification, SF3 decoder probe, registry update and reloading the entire active FluidSynth collection. The last stage may still take significant time; it does **not** report a fabricated percentage.
+- Success and failure are both displayed in a visible result dialog. If the new sound bank cannot be activated, its newly imported copy is removed to avoid poisoning subsequent startup; the original file remains unchanged.
+- The Android Documents provider may label `.sf2` and `.sf3` files with unusual MIME types, hiding them from the filtered SAF picker. The **顯示所有檔案** fallback exposes them while application-side extension validation still rejects unrelated files.
+- The import dialog warns about backgrounding: switching to another app does not intrinsically cancel the import while the current process survives, but Android can kill a background process. No background service or resumable import is implemented. Avoid switching apps or rotating the device while importing.
