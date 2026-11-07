@@ -26,6 +26,12 @@ object InstrumentNaming {
         }
     }
 
+    /** A one-preset bank is effectively one instrument: use its user-editable bank label
+     * instead of the verbose embedded name. Multi-preset banks retain individual names. */
+    fun presetDisplayName(preset: String?, bankTitle: String, presetCount: Int): String =
+        if (presetCount == 1 && bankTitle.isNotBlank()) clean(bankTitle)
+        else bestName(preset, bankTitle)
+
     fun category(source: String, program: Int, preset: String): String {
         val name = (if (generic(preset)) source else preset).lowercase()
         val hints = listOf(

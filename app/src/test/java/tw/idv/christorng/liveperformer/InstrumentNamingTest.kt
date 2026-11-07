@@ -20,6 +20,16 @@ class InstrumentNamingTest {
         assertEquals("Concert Piano", InstrumentNaming.bestName("SoundFont Bank 1", "Concert_Piano.sf3"))
     }
 
+    @Test fun onePresetUsesUserRenamedBankTitle() {
+        assertEquals("高品質鋼琴",
+            InstrumentNaming.presetDisplayName(
+                "SalamanderGrandPiano SF2 V3+20200602", "高品質鋼琴", 1))
+        assertEquals("Concert Grand",
+            InstrumentNaming.presetDisplayName("Concert Grand", "高品質鋼琴", 2))
+        assertEquals("Concert Grand",
+            InstrumentNaming.presetDisplayName("Concert Grand", "GeneralUser GS", 0))
+    }
+
     @Test fun namedPresetsWinAndGmFallbackStillWorks() {
         assertEquals("Concert Grand", InstrumentNaming.bestName("Concert Grand", "instrument"))
         assertEquals("貝斯", InstrumentNaming.category("Unknown", 33, "Preset"))

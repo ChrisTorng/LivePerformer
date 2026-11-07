@@ -1,4 +1,4 @@
-# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.6)
+# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.7)
 
 **Status: early source prototype, not yet device-verified.** Initial target: Samsung Galaxy A25 5G, USB MIDI keyboard, wired 3.5 mm headphones. v0.2.1 adds an ergonomic single-screen interface and v0.2 includes an experimental MIDI-only loop recorder; physical device performance remains unverified.
 
@@ -126,3 +126,11 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - Imported SoundFont titles now use the **source filename** when embedded `INAM` contains generic titles such as `Sound Bank`. Each imported bank also has a **更名** button, saved as a display-only preference; the original file and MIDI presets are untouched. Old generic labels automatically use their original source filename if available.
 - Android CI builds `assembleRelease` (R8 minified, resource shrinking, no debugger), verifies the native libraries and APK signature, and publishes `LivePerformer-v0.4.6.apk` rather than a debug APK. For upgrading the existing private test installation, this optimized release is deliberately signed with the **same publicly available disposable development certificate**, which is **not production signing**. Real production distribution will need a securely stored distinct signing key and may not update in place.
 - Tests cover SF3 RIFF sample-table conversion through an injected decoder (no device-level Vorbis test yet), source-name fallback, plus established Kotlin/native tests.
+
+## v0.4.7 — SF3 sample-count progress, codec reuse, readable instrument aliases, suffix filtering
+
+- SF3→SF2 conversion progress now reports **completed samples / total samples** and a corresponding bar. Decoded MiB remains visible separately. The number-based percentage is based on count, **not elapsed time**: individual Vorbis samples may vary widely in length/complexity.
+- One MediaCodec object and reusable output buffers are now used for an entire import session; each compressed stream is separately configured, stopped, and restarted to preserve its Ogg headers. This reduces repeated allocations and codec creation; performance is not claimed without on-device measurements. An Android emulator integration test still exercises actual SF3 decoding.
+- The import-completion message now renders a real line break rather than literal `\\n`.
+- The user-editable SoundFont library label becomes the selected **instrument name** when that SoundFont has exactly one preset. Multi-preset SoundFonts retain their distinct preset labels. Existing tracks are renamed only if their current name matches a default generated label; manually renamed tracks are preserved.
+- Android's system document picker filters **MIME types, not filename extensions**. A new in-app SAF folder browser lists only subfolders and allowed `.sf2/.sf3/.zip/.xz` or project `.lvp/.lvpt` files. It needs the user to grant access to a folder. Android 11+ disallows selecting the `Download` root; files directly in Downloads (or cloud providers) still use the separate system picker, which may show unrelated files. The app always validates the selected filename before import.

@@ -1,6 +1,7 @@
 package tw.idv.christorng.liveperformer
 
 import android.os.Bundle
+import android.net.Uri
 import android.view.WindowManager
 import android.os.Handler
 import android.os.Looper
@@ -169,6 +170,8 @@ private fun PerformerScreen() {
     var importing by remember { mutableStateOf(false) }
     var importProgress by remember { mutableStateOf<SoundFontImportProgress?>(null) }
     var importOutcome by remember { mutableStateOf<SoundFontImportOutcome?>(null) }
+    var selectedBrowserTree by remember { mutableStateOf<Uri?>(null) }
+    var selectedBrowserKind by remember { mutableStateOf(FilteredFileKind.SOUNDFONT) }
     val importUiHandler = remember { Handler(Looper.getMainLooper()) }
     var message by remember { mutableStateOf("啟動音訊中…") }
     var audioStatus by remember { mutableStateOf("Audio: starting…") }
@@ -309,9 +312,7 @@ private fun PerformerScreen() {
             }
         }
     }
-    val openJson = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
+    fun handleProjectSelection(uri: Uri?) {
         if (uri != null) scope.launch {
             try {
                 require(ImportFileTypes.isProjectFileName(ImportFileTypes.displayName(context, uri))) {
@@ -330,13 +331,16 @@ private fun PerformerScreen() {
             } catch (e: Exception) { message = "載入失敗：${e.message}" }
         }
     }
+    val openJson = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { handleProjectSelection(it) }
 
     val microphonePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) runMeasurement() else measurement = "未授予麥克風權限，無法回錄。"
     }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    fun handleFontSelection(uri: Uri?) {
         if (uri != null && !loading && !importing) {
             importing = true
             importOutcome = null
@@ -377,7 +381,7 @@ private fun PerformerScreen() {
                             "${item.title} 已可供選擇與演奏。" +
                                 if (item.file.extension.equals("sf2", ignoreCase = true) &&
                                     ImportFileTypes.displayName(context, uri).endsWith(".sf3", ignoreCase = true))
-                                    "\\n此 SF3 已在匯入時以 Android Vorbis 解碼轉為 SF2，App 內檔案會比原始 SF3 大。"
+                                    "\n此 SF3 已在匯入時以 Android Vorbis 解碼轉為 SF2，App 內檔案可能比原始 SF3 大。"
                                 else "")
                     } else {
                         if (created) {
@@ -401,6 +405,14 @@ private fun PerformerScreen() {
                 }
             }
         }
+    }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
+        handleFontSelection(it)
+    }
+    val treePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) selectedBrowserTree = uri
     }
 
     DisposableEffect(audioManager) {
@@ -660,6 +672,17 @@ private fun PerformerScreen() {
                         val renamed = library.rename(candidate, renameFontValue)
                         val index = fonts.indexOfFirst { it.id == candidate.id }
                         if (index >= 0) fonts[index] = renamed
+                        looper.configureFonts(fonts.toList())
+                        scope.launch {
+                            val bankPresets = withContext(Dispatchers.IO) {
+                                runCatching { SoundFontPresets.read(candidate.file).presets }
+                                    .getOrDefault(emptyList())
+                            }
+                            if (bankPresets.size == 1) {
+                                looper.renameSinglePresetTracks(candidate.id,
+                                    listOf(candidate.title, bankPresets.single().name), renamed.title)
+                            }
+                        }
                         message = "音色庫已重新命名：${renamed.title}"
                         renameFontCandidate = null
                     } catch (ex: Exception) { message = "重新命名失敗：${ex.message}" }
@@ -730,6 +753,24 @@ private fun PerformerScreen() {
         )
     }
 
+    selectedBrowserTree?.let { tree ->
+        FilteredDocumentBrowser(
+            treeUri = tree,
+            kind = selectedBrowserKind,
+            onPick = { uri ->
+                selectedBrowserTree = null
+                if (selectedBrowserKind == FilteredFileKind.SOUNDFONT)
+                    handleFontSelection(uri) else handleProjectSelection(uri)
+            },
+            onSystemPicker = {
+                selectedBrowserTree = null
+                if (selectedBrowserKind == FilteredFileKind.SOUNDFONT)
+                    picker.launch(arrayOf("*/*"))
+                else openJson.launch(arrayOf("*/*"))
+            },
+            onClose = { selectedBrowserTree = null }
+        )
+    }
     if (importing) {
         val progress = importProgress ?: SoundFontImportProgress("準備匯入音色檔")
         AlertDialog(
@@ -745,10 +786,19 @@ private fun PerformerScreen() {
                             progress = { fraction },
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Text("${(fraction * 100).toInt()}% · " +
-                            String.format(java.util.Locale.US, "%.1f", progress.completedBytes / 1048576.0) +
-                            " / " + String.format(java.util.Locale.US, "%.1f",
-                                (progress.totalBytes ?: 0L) / 1048576.0) + " MiB")
+                        if (progress.totalItems != null && progress.completedItems != null) {
+                            Text("${progress.completedItems} / ${progress.totalItems} 個樣本 " +
+                                "（${(fraction * 100).toInt()}%）")
+                            Text("已產生 " + String.format(java.util.Locale.US,
+                                "%.1f", progress.completedBytes / 1048576.0) +
+                                " MiB PCM；樣本數進度不代表剩餘時間",
+                                style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            Text("${(fraction * 100).toInt()}% · " +
+                                String.format(java.util.Locale.US, "%.1f", progress.completedBytes / 1048576.0) +
+                                " / " + String.format(java.util.Locale.US, "%.1f",
+                                    (progress.totalBytes ?: 0L) / 1048576.0) + " MiB")
+                        }
                     } else {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         if (progress.completedBytes > 0L) {
@@ -902,7 +952,8 @@ private fun PerformerScreen() {
                         DropdownMenuItem(text = { Text("從外部檔案匯入") }, onClick = {
                             showLoadChoices = false
                             guardedLoad {
-                                openJson.launch(ImportFileTypes.projectMimeTypes)
+                                selectedBrowserKind = FilteredFileKind.PROJECT
+                                treePicker.launch(null)
                             }
                         })
                         DropdownMenuItem(text = { Text("內建示範（含錄製內容）") }, onClick = {
@@ -987,14 +1038,15 @@ private fun PerformerScreen() {
                 }
             }
             OutlinedButton(enabled = !loading && !importing, onClick = {
-                picker.launch(ImportFileTypes.soundFontMimeTypes)
-            }) { Text("匯入 SF2 / SF3 / ZIP / XZ") }
+                selectedBrowserKind = FilteredFileKind.SOUNDFONT
+                treePicker.launch(null)
+            }) { Text("依副檔名篩選匯入 SF2 / SF3 / ZIP / XZ") }
             TextButton(enabled = !loading && !importing,
                 onClick = { picker.launch(arrayOf("*/*")) }) {
-                Text("找不到 SF2／SF3 檔案？顯示所有檔案")
+                Text("系統選檔（下載根目錄／雲端檔案）")
             }
-            Text("Android 檔案選擇器可能將 SoundFont 歸類為其他類型；" +
-                "顯示所有檔案仍會於匯入前檢查副檔名。",
+            Text("篩選模式先選資料夾，再只列出允許的副檔名；" +
+                "Android 不支援在系統選檔器直接以副檔名過濾，因此系統選檔仍可能列出其他檔案。",
                 style = MaterialTheme.typography.bodySmall)
             Text(message, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

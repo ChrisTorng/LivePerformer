@@ -141,6 +141,13 @@ internal object Sf3ToSf2Converter {
         decoder: VorbisSampleDecoder = AndroidVorbisSampleDecoder
     ) {
         require(source != destination)
+        // One codec per conversion, rather than creating/releasing it for every
+        // sample. Reconfigure between independent Ogg streams so their Vorbis
+        // headers/codebooks are never mixed.
+        val session = if (decoder === AndroidVorbisSampleDecoder)
+            AndroidVorbisSampleDecoder.Session() else null
+        val activeDecoder = session ?: decoder
+        try {
         RandomAccessFile(source, "r").use { input ->
             require(input.length() in 12..MAX_FILE) { "SF3 大小不正確或超過 2 GB" }
             require(fourcc(input) == "RIFF") { "SF3 並非 RIFF 檔案" }
@@ -196,6 +203,7 @@ internal object Sf3ToSf2Converter {
                     writeId(out, "sfbk")
                     var pcmFrames = 0L
                     var decoded = false
+                    var lastUiUpdate = 0L
                     for (topChunk in top) {
                         when (topChunk) {
                             sdta -> {
@@ -222,7 +230,7 @@ internal object Sf3ToSf2Converter {
                                             "SF3 第 ${index + 1} 個樣本不是 Ogg Vorbis"
                                         }
                                         // SF3 dwEnd is inclusive: the last byte of the Ogg stream.
-                                        frames = decoder.decode(source, smpl.data + sample.start,
+                                        frames = activeDecoder.decode(source, smpl.data + sample.start,
                                             minOf(sample.end - sample.start + 1,
                                                 smpl.size - sample.start), out, sample.sampleRate)
                                         decoded = true
@@ -255,10 +263,17 @@ internal object Sf3ToSf2Converter {
                                     h.copyInto(table, index * SHDR_RECORD)
                                     out.write(ByteArray(SILENCE_FRAMES * 2))
                                     pcmFrames += frames + SILENCE_FRAMES
-                                    onProgress(SoundFontImportProgress(
-                                        "SF3 → SF2：樣本 ${index + 1} / $n",
-                                        out.filePointer - payloadStart
-                                    ))
+                                    val now = System.nanoTime()
+                                    if (index == 0 || index == n - 1 ||
+                                        now - lastUiUpdate >= 150_000_000L) {
+                                        lastUiUpdate = now
+                                        onProgress(SoundFontImportProgress(
+                                            stage = "SF3 → SF2：解碼音色樣本",
+                                            completedBytes = out.filePointer - payloadStart,
+                                            completedItems = index + 1,
+                                            totalItems = n
+                                        ))
+                                    }
                                 }
                                 val last = n * SHDR_RECORD
                                 repeat(4) { offset -> putU32(table, last + 20 + offset * 4, pcmFrames) }
@@ -295,16 +310,29 @@ internal object Sf3ToSf2Converter {
                 throw ex
             }
         }
+        } finally {
+            session?.close()
+        }
     }
 }
 
 /** Android platform decoder; runs only during import on Dispatchers.IO. */
 internal object AndroidVorbisSampleDecoder : VorbisSampleDecoder {
-    override fun decode(
-        source: File, offset: Long, bytes: Long, target: RandomAccessFile, sampleRate: Int
-    ): Long {
+    override fun decode(source: File, offset: Long, bytes: Long, target: RandomAccessFile,
+                        sampleRate: Int): Long =
+        Session().use { it.decode(source, offset, bytes, target, sampleRate) }
+
+    /** Reuses the MediaCodec object across independent samples, while stopping,
+     * reconfiguring and restarting for each Ogg stream's own Vorbis headers. */
+    class Session : VorbisSampleDecoder, AutoCloseable {
+        private var codec: MediaCodec? = null
+        // Recycle small PCM buffers for all samples in this conversion.
+        private val rawPcm = ByteArray(64 * 1024)
+        private val floatPcm = ByteArray(32 * 1024)
+        override fun decode(
+            source: File, offset: Long, bytes: Long, target: RandomAccessFile, sampleRate: Int
+        ): Long {
         val extractor = MediaExtractor()
-        var codec: MediaCodec? = null
         try {
             FileInputStream(source).use { input ->
                 extractor.setDataSource(input.fd, offset, bytes)
@@ -320,8 +348,9 @@ internal object AndroidVorbisSampleDecoder : VorbisSampleDecoder {
             require(format.getInteger(MediaFormat.KEY_SAMPLE_RATE) == sampleRate) {
                 "SF3 Vorbis 樣本取樣率不一致"
             }
-            val decoder = MediaCodec.createDecoderByType("audio/vorbis")
-            codec = decoder
+            val decoder = codec ?: MediaCodec.createDecoderByType("audio/vorbis").also {
+                codec = it
+            }
             decoder.configure(format, null, null, 0)
             decoder.start()
             var inputDone = false
@@ -367,22 +396,25 @@ internal object AndroidVorbisSampleDecoder : VorbisSampleDecoder {
                             else AudioFormat.ENCODING_PCM_16BIT
                             if (pcmEncoding == AudioFormat.ENCODING_PCM_16BIT) {
                                 require(info.size % 2 == 0)
-                                val raw = ByteArray(info.size)
-                                buffer.get(raw)
-                                target.write(raw)
-                                frames += raw.size / 2L
+                                while (buffer.hasRemaining()) {
+                                    val bytesToRead = minOf(buffer.remaining(), rawPcm.size)
+                                    buffer.get(rawPcm, 0, bytesToRead)
+                                    target.write(rawPcm, 0, bytesToRead)
+                                    frames += bytesToRead / 2L
+                                }
                             } else if (pcmEncoding == AudioFormat.ENCODING_PCM_FLOAT) {
                                 require(info.size % 4 == 0)
                                 buffer.order(ByteOrder.LITTLE_ENDIAN)
-                                val raw = ByteArray(info.size / 2)
-                                var pos = 0
                                 while (buffer.remaining() >= 4) {
-                                    val sample = (buffer.float.coerceIn(-1f, 1f) * 32767f).toInt()
-                                    raw[pos++] = sample.toByte()
-                                    raw[pos++] = (sample shr 8).toByte()
+                                    var pos = 0
+                                    while (buffer.remaining() >= 4 && pos < floatPcm.size) {
+                                        val sample = (buffer.float.coerceIn(-1f, 1f) * 32767f).toInt()
+                                        floatPcm[pos++] = sample.toByte()
+                                        floatPcm[pos++] = (sample shr 8).toByte()
+                                    }
+                                    target.write(floatPcm, 0, pos)
+                                    frames += pos / 2L
                                 }
-                                target.write(raw)
-                                frames += raw.size / 2L
                             } else error("不支援的 Android PCM 解碼格式：$pcmEncoding")
                         }
                         outputDone = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
@@ -397,8 +429,12 @@ internal object AndroidVorbisSampleDecoder : VorbisSampleDecoder {
             return frames
         } finally {
             runCatching { codec?.stop() }
-            runCatching { codec?.release() }
             extractor.release()
+        }
+        }
+        override fun close() {
+            runCatching { codec?.release() }
+            codec = null
         }
     }
 }

@@ -65,8 +65,8 @@ class Sf3ToSf2ConverterTest {
         val output = File.createTempFile("sf2-struct", ".sf2")
         try {
             input.writeBytes(makeSF3())
-            val steps = mutableListOf<String>()
-            Sf3ToSf2Converter.convert(input, output, { steps.add(it.stage) },
+            val steps = mutableListOf<SoundFontImportProgress>()
+            Sf3ToSf2Converter.convert(input, output, { steps.add(it) },
                 VorbisSampleDecoder { _, _, _, target, rate ->
                     assertEquals(44100, rate)
                     target.write(byteArrayOf(0, 0, 1, 0, 2, 0, 3, 0))
@@ -91,7 +91,9 @@ class Sf3ToSf2ConverterTest {
             assertEquals(3L, u32(bytes, h + 32))
             assertEquals(1, bytes[h + 44].toInt())
             assertEquals(50L, u32(bytes, h + 46 + 20))
-            assertTrue(steps.any { it.contains("樣本 1 / 1") })
+            assertTrue(steps.any {
+                it.completedItems == 1 && it.totalItems == 1 && it.fraction == 1f
+            })
         } finally { input.delete(); output.delete() }
     }
 
