@@ -16,9 +16,14 @@ import java.util.zip.ZipInputStream
 data class SoundFontImportProgress(
     val stage: String,
     val completedBytes: Long = 0L,
-    val totalBytes: Long? = null
+    val totalBytes: Long? = null,
+    val completedItems: Int? = null,
+    val totalItems: Int? = null
 ) {
-    val fraction: Float? get() = totalBytes?.takeIf { it > 0 }?.let { total ->
+    val fraction: Float? get() = if (totalItems != null && totalItems > 0 &&
+        completedItems != null) {
+        (completedItems.toDouble() / totalItems).coerceIn(0.0, 1.0).toFloat()
+    } else totalBytes?.takeIf { it > 0 }?.let { total ->
         (completedBytes.toDouble() / total).coerceIn(0.0, 1.0).toFloat()
     }
 }
