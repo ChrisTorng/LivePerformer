@@ -672,6 +672,17 @@ private fun PerformerScreen() {
                         val renamed = library.rename(candidate, renameFontValue)
                         val index = fonts.indexOfFirst { it.id == candidate.id }
                         if (index >= 0) fonts[index] = renamed
+                        looper.configureFonts(fonts.toList())
+                        scope.launch {
+                            val bankPresets = withContext(Dispatchers.IO) {
+                                runCatching { SoundFontPresets.read(candidate.file).presets }
+                                    .getOrDefault(emptyList())
+                            }
+                            if (bankPresets.size == 1) {
+                                looper.renameSinglePresetTracks(candidate.id,
+                                    listOf(candidate.title, bankPresets.single().name), renamed.title)
+                            }
+                        }
                         message = "音色庫已重新命名：${renamed.title}"
                         renameFontCandidate = null
                     } catch (ex: Exception) { message = "重新命名失敗：${ex.message}" }
@@ -775,10 +786,19 @@ private fun PerformerScreen() {
                             progress = { fraction },
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Text("${(fraction * 100).toInt()}% · " +
-                            String.format(java.util.Locale.US, "%.1f", progress.completedBytes / 1048576.0) +
-                            " / " + String.format(java.util.Locale.US, "%.1f",
-                                (progress.totalBytes ?: 0L) / 1048576.0) + " MiB")
+                        if (progress.totalItems != null && progress.completedItems != null) {
+                            Text("${progress.completedItems} / ${progress.totalItems} 個樣本 " +
+                                "（${(fraction * 100).toInt()}%）")
+                            Text("已產生 " + String.format(java.util.Locale.US,
+                                "%.1f", progress.completedBytes / 1048576.0) +
+                                " MiB PCM；樣本數進度不代表剩餘時間",
+                                style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            Text("${(fraction * 100).toInt()}% · " +
+                                String.format(java.util.Locale.US, "%.1f", progress.completedBytes / 1048576.0) +
+                                " / " + String.format(java.util.Locale.US, "%.1f",
+                                    (progress.totalBytes ?: 0L) / 1048576.0) + " MiB")
+                        }
                     } else {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         if (progress.completedBytes > 0L) {
