@@ -68,17 +68,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/release/app-release.apk LivePerformer-v0.4.7.apk
-          zip -9 LivePerformer-v0.4.7.zip LivePerformer-v0.4.7.apk
-          sha256sum LivePerformer-v0.4.7.apk > LivePerformer-v0.4.7.sha256
-          TAG=v0.4.7-dev
+          cp app/build/outputs/apk/release/app-release.apk LivePerformer-v0.4.8.apk
+          zip -9 LivePerformer-v0.4.8.zip LivePerformer-v0.4.8.apk
+          sha256sum LivePerformer-v0.4.8.apk > LivePerformer-v0.4.8.sha256
+          TAG=v0.4.8-dev
           NOTES="Non-debuggable optimized Android release build (R8 + native -O3), signed with the publicly shared development-only certificate so previous test installations can update without clearing local data. NOT a production signing key. SF3 import converts Vorbis samples offline to SF2 using Android MediaCodec; decoded SF2 needs substantially more storage. Android device-level validation is still required."
           if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" LivePerformer-v0.4.7.apk LivePerformer-v0.4.7.zip LivePerformer-v0.4.7.sha256 --clobber
+            gh release upload "$TAG" LivePerformer-v0.4.8.apk LivePerformer-v0.4.8.zip LivePerformer-v0.4.8.sha256 --clobber
           else
-            gh release create "$TAG" LivePerformer-v0.4.7.apk LivePerformer-v0.4.7.zip LivePerformer-v0.4.7.sha256 \
+            gh release create "$TAG" LivePerformer-v0.4.8.apk LivePerformer-v0.4.8.zip LivePerformer-v0.4.8.sha256 \
               --target "$GITHUB_SHA" --prerelease \
-              --title "LivePerformer v0.4.7 (optimized test APK)" \
+              --title "LivePerformer v0.4.8 (optimized test APK)" \
               --notes "$NOTES"
           fi
       - name: Upload optimized APK artifact
