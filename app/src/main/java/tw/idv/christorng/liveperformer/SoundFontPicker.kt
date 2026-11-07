@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -54,8 +55,12 @@ fun SoundFontPicker(
     val shownPresets = allPresets.filter { activeCategory != null && categoryOf(it) == activeCategory }
     val lastProgram = prefs.getInt("last:${sourceId}:${activeCategory}", -1)
 
+    fun displayName(preset: InstrumentPreset): String =
+        InstrumentNaming.presetDisplayName(
+            preset.name, source?.title.orEmpty(), if (source?.isBundled == true) 0 else allPresets.size
+        )
     fun select(preset: InstrumentPreset) {
-        val title = InstrumentNaming.bestName(preset.name, source?.title.orEmpty())
+        val title = displayName(preset)
         prefs.edit().putInt("last:${sourceId}:${activeCategory}", preset.program).apply()
         onChoose(sourceId, preset.bank, preset.program, title, activeCategory ?: "鋼琴")
         onClose()
@@ -72,7 +77,8 @@ fun SoundFontPicker(
                         FilterChip(
                             selected = sourceId == font.id,
                             onClick = { sourceId = font.id },
-                            label = { Text(font.title, maxLines = 1) },
+                            label = { Text(font.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 188.dp)) },
                             modifier = Modifier.padding(end = 6.dp)
                         )
                     }
@@ -90,7 +96,7 @@ fun SoundFontPicker(
                 Text("3. 樂器", style = MaterialTheme.typography.labelMedium)
                 shownPresets.firstOrNull { it.program == lastProgram }?.let { favourite ->
                     TextButton(onClick = { select(favourite) }) {
-                        Text("★ " + InstrumentNaming.bestName(favourite.name, source?.title.orEmpty()),
+                        Text("★ " + displayName(favourite),
                             maxLines = 1)
                     }
                 }
@@ -98,7 +104,7 @@ fun SoundFontPicker(
                     items(shownPresets, key = { "${it.bank}:${it.program}" }) { preset ->
                         TextButton(onClick = { select(preset) }, modifier = Modifier.fillMaxWidth()) {
                             Text("${preset.program + 1}. " +
-                                InstrumentNaming.bestName(preset.name, source?.title.orEmpty()),
+                                displayName(preset),
                                 modifier = Modifier.fillMaxWidth())
                         }
                     }
