@@ -117,7 +117,7 @@ assert 'SettingsPage.MIDI_TEST' in activity and 'SettingsPage.AUDIO_TEST' in act
 assert 'MidiSystemPanel(midiDevices, midiLogs' in activity
 assert 'messagesByDevice[device.id]' in routing_ui
 assert 'LocalTime.now()' not in (root/'app/src/main/java/tw/idv/christorng/liveperformer/MidiDiagnostics.kt').read_text()
-assert 'ImportFileTypes.soundFontMimeTypes' in activity and 'ImportFileTypes.projectMimeTypes' in activity
+assert 'FilteredDocumentBrowser(' in activity and 'OpenDocumentTree()' in activity
 assert 'isSoundFontFileName' in types and 'isProjectFileName' in types
 assert 'validateSoundFont' in native_kt and 'validateSoundFont' in native
 assert 'SF3' in importer and 'soundFontExtension' in store
