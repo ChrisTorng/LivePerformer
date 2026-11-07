@@ -60,6 +60,26 @@ class ProjectStorage(context: Context) {
         return Entry(target.name, template, target.lastModified())
     }
 
+    /** Import from Downloads (or another SAF provider) into the private project
+     * library that the LivePerformer DocumentsProvider exposes in Android Files.
+     * Never overwrite an existing saved project on import. */
+    fun importExternal(sourceFileName: String, json: String): Entry {
+        val isTemplate = sourceFileName.endsWith(TEMPLATE_EXTENSION, ignoreCase = true)
+        require(isTemplate || sourceFileName.endsWith(PROJECT_EXTENSION, ignoreCase = true)) {
+            "只支援 .lvp 專案與 .lvpt 範本"
+        }
+        val extension = if (isTemplate) TEMPLATE_EXTENSION else PROJECT_EXTENSION
+        val normalizedName = sourceFileName.dropLast(extension.length)
+        val cleanName = fileName(normalizedName, isTemplate).removeSuffix(extension)
+        for (index in 0..9999) {
+            val candidate = if (index == 0) cleanName else "$cleanName ($index)"
+            if (!File(directory, candidate + extension).exists()) {
+                return save(candidate, isTemplate, json)
+            }
+        }
+        error("專案檔名已使用過多次，無法自動新增")
+    }
+
     fun read(entry: Entry): String {
         require(entry.fileName == fileName(entry.displayName, entry.isTemplate))
         val target = File(directory, entry.fileName).canonicalFile

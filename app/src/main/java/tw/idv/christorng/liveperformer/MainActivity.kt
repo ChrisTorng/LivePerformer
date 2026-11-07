@@ -170,8 +170,7 @@ private fun PerformerScreen() {
     var importing by remember { mutableStateOf(false) }
     var importProgress by remember { mutableStateOf<SoundFontImportProgress?>(null) }
     var importOutcome by remember { mutableStateOf<SoundFontImportOutcome?>(null) }
-    var selectedBrowserTree by remember { mutableStateOf<Uri?>(null) }
-    var selectedBrowserKind by remember { mutableStateOf(FilteredFileKind.SOUNDFONT) }
+    var showManagedImport by remember { mutableStateOf(false) }
     val importUiHandler = remember { Handler(Looper.getMainLooper()) }
     var message by remember { mutableStateOf("啟動音訊中…") }
     var audioStatus by remember { mutableStateOf("Audio: starting…") }
@@ -324,10 +323,17 @@ private fun PerformerScreen() {
                     } ?: error("無法開啟檔案")
                 }
                 looper.importDocument(content)
+                val importedName = ImportFileTypes.displayName(context, uri)
+                val libraryEntry = withContext(Dispatchers.IO) {
+                    projectStorage.importExternal(importedName, content)
+                }
+                projectLibraryVersion++
                 val missing = looper.state.value.tracks.map { it.fontId }
                     .filter { id -> fonts.none { it.id == id } }.distinct()
-                message = if (missing.isEmpty()) "已載入" else
-                    "已載入；缺少音色庫 ${missing.joinToString()}（暫用 GM）"
+                message = if (missing.isEmpty())
+                    "已匯入並存入 LivePerformer 專案／範本：${libraryEntry.fileName}"
+                else "已匯入並存入 LivePerformer：${libraryEntry.fileName}；" +
+                    "缺少音色庫 ${missing.joinToString()}（暫用 GM）"
             } catch (e: Exception) { message = "載入失敗：${e.message}" }
         }
     }
@@ -409,12 +415,6 @@ private fun PerformerScreen() {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
         handleFontSelection(it)
     }
-    val treePicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        if (uri != null) selectedBrowserTree = uri
-    }
-
     DisposableEffect(audioManager) {
         scanAudioOutputs()
         val deviceCallback = object : AudioDeviceCallback() {
@@ -753,22 +753,18 @@ private fun PerformerScreen() {
         )
     }
 
-    selectedBrowserTree?.let { tree ->
-        FilteredDocumentBrowser(
-            treeUri = tree,
-            kind = selectedBrowserKind,
-            onPick = { uri ->
-                selectedBrowserTree = null
-                if (selectedBrowserKind == FilteredFileKind.SOUNDFONT)
-                    handleFontSelection(uri) else handleProjectSelection(uri)
+    if (showManagedImport) {
+        ManagedImportPicker(
+            context = context,
+            onSelect = { uri ->
+                showManagedImport = false
+                handleFontSelection(uri)
             },
+            onClose = { showManagedImport = false },
             onSystemPicker = {
-                selectedBrowserTree = null
-                if (selectedBrowserKind == FilteredFileKind.SOUNDFONT)
-                    picker.launch(arrayOf("*/*"))
-                else openJson.launch(arrayOf("*/*"))
-            },
-            onClose = { selectedBrowserTree = null }
+                showManagedImport = false
+                picker.launch(arrayOf("*/*"))
+            }
         )
     }
     if (importing) {
@@ -952,8 +948,7 @@ private fun PerformerScreen() {
                         DropdownMenuItem(text = { Text("從外部檔案匯入") }, onClick = {
                             showLoadChoices = false
                             guardedLoad {
-                                selectedBrowserKind = FilteredFileKind.PROJECT
-                                treePicker.launch(null)
+                                openJson.launch(arrayOf("*/*"))
                             }
                         })
                         DropdownMenuItem(text = { Text("內建示範（含錄製內容）") }, onClick = {
@@ -972,7 +967,9 @@ private fun PerformerScreen() {
                 exportSettingsOnly = false
                 createJson.launch(ProjectStorage.suggestedName() + ProjectStorage.PROJECT_EXTENSION)
             }) { Text("匯出 .lvp 至外部位置") }
-            Text("儲存與讀取只列出 .lvp 專案及 .lvpt 音軌範本；兩者內部仍為 JSON。",
+            Text("專案與範本預設儲存於 LivePerformer 專用資料庫，" +
+                "亦可透過 Android Files → LivePerformer → 專案／音軌範本 存取；" +
+                "從 Downloads 匯入的檔案會複製到專用資料庫。",
                 style = MaterialTheme.typography.bodySmall)
             Text("音軌編輯、樂器選擇及排序在演奏畫面操作。", style = MaterialTheme.typography.bodySmall)
             HorizontalDivider()
@@ -1037,16 +1034,16 @@ private fun PerformerScreen() {
                     }
                 }
             }
-            OutlinedButton(enabled = !loading && !importing, onClick = {
-                selectedBrowserKind = FilteredFileKind.SOUNDFONT
-                treePicker.launch(null)
-            }) { Text("依副檔名篩選匯入 SF2 / SF3 / ZIP / XZ") }
-            TextButton(enabled = !loading && !importing,
+            OutlinedButton(enabled = !loading && !importing,
                 onClick = { picker.launch(arrayOf("*/*")) }) {
-                Text("系統選檔（下載根目錄／雲端檔案）")
+                Text("從 Downloads／其他位置匯入 SF2 / SF3 / ZIP / XZ")
             }
-            Text("篩選模式先選資料夾，再只列出允許的副檔名；" +
-                "Android 不支援在系統選檔器直接以副檔名過濾，因此系統選檔仍可能列出其他檔案。",
+            TextButton(enabled = !loading && !importing, onClick = {
+                showManagedImport = true
+            }) { Text("LivePerformer 待匯入音色（依副檔名篩選）") }
+            Text("從下載中選檔不需要資料夾授權。Android Files 另外提供 LivePerformer " +
+                "專用位置：已匯入音色庫、待匯入音色、專案、音軌範本。" +
+                "待匯入資料夾可由 Files 複製檔案進去，再回 App 匯入。",
                 style = MaterialTheme.typography.bodySmall)
             Text(message, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

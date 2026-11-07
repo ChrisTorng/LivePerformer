@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.4.7' in workflow and 'versionCode = 16' in gradle
+assert 'v0.4.8' in workflow and 'versionCode = 17' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -117,7 +117,7 @@ assert 'SettingsPage.MIDI_TEST' in activity and 'SettingsPage.AUDIO_TEST' in act
 assert 'MidiSystemPanel(midiDevices, midiLogs' in activity
 assert 'messagesByDevice[device.id]' in routing_ui
 assert 'LocalTime.now()' not in (root/'app/src/main/java/tw/idv/christorng/liveperformer/MidiDiagnostics.kt').read_text()
-assert 'FilteredDocumentBrowser(' in activity and 'OpenDocumentTree()' in activity
+assert 'ManagedImportPicker(' in activity and 'OpenDocumentTree()' not in activity
 assert 'isSoundFontFileName' in types and 'isProjectFileName' in types
 assert 'validateSoundFont' in native_kt and 'validateSoundFont' in native
 assert 'SF3' in importer and 'soundFontExtension' in store
@@ -168,7 +168,7 @@ print('PASS: actual SF3 Vorbis conversion is required on Android emulator before
 browser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/FilteredDocumentBrowser.kt').read_text()
 converter=(root/'app/src/main/java/tw/idv/christorng/liveperformer/Sf3ToSf2Converter.kt').read_text()
 picker_ui=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPicker.kt').read_text()
-assert 'FilteredDocumentBrowser(' in activity and 'OpenDocumentTree()' in activity
+assert 'ManagedImportPicker(' in activity and 'OpenDocumentTree()' not in activity
 assert 'buildChildDocumentsUriUsingTree' in browser
 assert 'isSoundFontFileName' in browser and 'isProjectFileName' in browser
 assert 'completedItems = index + 1' in converter and 'totalItems = n' in converter
@@ -177,3 +177,22 @@ assert 'presetDisplayName' in picker_ui and 'renameSinglePresetTracks' in activi
 assert 'AndroidVorbisSampleDecoder.Session()' in converter
 assert 'val rawPcm = ByteArray(' in converter
 print('PASS: correct SF3 progress, bank/preset aliases, reusable Vorbis decoder and SAF suffix browser')
+
+# v0.4.8: app-owned SAF library and import inbox; Downloads never needs tree access.
+provider=(root/'app/src/main/java/tw/idv/christorng/liveperformer/LivePerformerDocumentsProvider.kt').read_text()
+managed=(root/'app/src/main/java/tw/idv/christorng/liveperformer/ManagedImportPicker.kt').read_text()
+project_store=(root/'app/src/main/java/tw/idv/christorng/liveperformer/ProjectStorage.kt').read_text()
+assert 'class LivePerformerDocumentsProvider : DocumentsProvider()' in provider
+assert 'DocumentsContract.Root.FLAG_SUPPORTS_CREATE' in provider
+assert 'override fun queryRoots(' in provider and 'override fun queryChildDocuments(' in provider
+assert 'override fun createDocument(' in provider and 'override fun openDocument(' in provider
+assert 'override fun isChildDocument(' in provider
+assert 'android.content.action.DOCUMENTS_PROVIDER' in manifest
+assert 'android.permission.MANAGE_DOCUMENTS' in manifest
+assert 'LivePerformerDocumentsProvider.pendingSoundFonts' in managed
+assert 'projectStorage.importExternal' in activity and 'fun importExternal(' in project_store
+assert 'picker.launch(arrayOf("*/*"))' in activity
+assert 'openJson.launch(arrayOf("*/*"))' in activity
+assert 'treePicker.launch(null)' not in activity
+assert (root/'app/src/androidTest/java/tw/idv/christorng/liveperformer/ManagedDocumentsProviderTest.kt').is_file()
+print('PASS: Android Files exposes managed bank/project/template folders and scoped SoundFont inbox')

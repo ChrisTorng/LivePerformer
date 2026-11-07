@@ -1,4 +1,4 @@
-# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.7)
+# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.8)
 
 **Status: early source prototype, not yet device-verified.** Initial target: Samsung Galaxy A25 5G, USB MIDI keyboard, wired 3.5 mm headphones. v0.2.1 adds an ergonomic single-screen interface and v0.2 includes an experimental MIDI-only loop recorder; physical device performance remains unverified.
 
@@ -134,3 +134,16 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - The import-completion message now renders a real line break rather than literal `\\n`.
 - The user-editable SoundFont library label becomes the selected **instrument name** when that SoundFont has exactly one preset. Multi-preset SoundFonts retain their distinct preset labels. Existing tracks are renamed only if their current name matches a default generated label; manually renamed tracks are preserved.
 - Android's system document picker filters **MIME types, not filename extensions**. A new in-app SAF folder browser lists only subfolders and allowed `.sf2/.sf3/.zip/.xz` or project `.lvp/.lvpt` files. It needs the user to grant access to a folder. Android 11+ disallows selecting the `Download` root; files directly in Downloads (or cloud providers) still use the separate system picker, which may show unrelated files. The app always validates the selected filename before import.
+
+## v0.4.8 — managed LivePerformer files and Downloads compatibility
+
+- Android 11+ deliberately disables **ACTION_OPEN_DOCUMENT_TREE** for the phone storage root and the `Download` directory. Choosing a single SF2/SF3/ZIP/XZ file with **ACTION_OPEN_DOCUMENT** is still permitted; the primary `從 Downloads／其他位置匯入` button now opens that working system file picker directly (and validates the suffix after selection).
+- A real **LivePerformer DocumentsProvider root** is now registered in Android's system Files/SAF browser. It exposes four logical folders:
+  - `音色庫（已匯入）`: read-only, includes previously imported SF2 and bundled GeneralUser; no extra copy or migration.
+  - `待匯入音色`: writable. Copy SF2/SF3/ZIP/XZ here from Downloads using an Android system Files app; then tap `LivePerformer 待匯入音色` in LivePerformer to select files, filtered by their actual suffix. No global storage permissions required.
+  - `專案`: the existing app-managed `.lvp` library from `filesDir/projects`.
+  - `音軌範本`: the existing `.lvpt` templates, shown separately without duplicating them.
+- External projects imported from Downloads are copied into the internal project library, using unique filenames rather than overwriting existing saved projects. They remain available from the regular saved-project list and the DocumentsProvider location.
+- The DocumentsProvider is a **virtual system Files location backed by App-private storage**, not a physical `/storage/emulated/0/Documents/LivePerformer` path. This avoids a second copy of large converted SF2s. It appears as `LivePerformer` among available locations in Android's native Files picker; individual OEM file managers vary in how they display external providers. Data in this root is removed when the app is uninstalled; exporting/copying documents outside it is still recommended for backups.
+- Files directly under Downloads, including the user's existing SF3/XZ, stay exactly where they are: use the direct system picker and search. The system picker may show other extensions because Android scopes it by MIME; LivePerformer verifies suffixes before parsing.
+- Provider and project import behavior have Android emulator integration tests for root listing, copying to the inbox, duplicate-safe project import, and rejecting unrelated extensions.
