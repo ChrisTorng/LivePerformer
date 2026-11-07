@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.4.6' in workflow and 'versionCode = 15' in gradle
+assert 'v0.4.7' in workflow and 'versionCode = 16' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -163,3 +163,17 @@ assert 'connectedDebugAndroidTest' in workflow
 assert 'VintageDreamsWaves-v2.sf3' in workflow
 assert (root/'app/src/androidTest/java/tw/idv/christorng/liveperformer/Sf3PlatformDecoderTest.kt').is_file()
 print('PASS: actual SF3 Vorbis conversion is required on Android emulator before APK release')
+
+# v0.4.7: sample-count progress, renderer efficiency, short preset names and SAF filtering
+browser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/FilteredDocumentBrowser.kt').read_text()
+converter=(root/'app/src/main/java/tw/idv/christorng/liveperformer/Sf3ToSf2Converter.kt').read_text()
+picker_ui=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPicker.kt').read_text()
+assert 'FilteredDocumentBrowser(' in activity and 'OpenDocumentTree()' in activity
+assert 'buildChildDocumentsUriUsingTree' in browser
+assert 'isSoundFontFileName' in browser and 'isProjectFileName' in browser
+assert 'completedItems = index + 1' in converter and 'totalItems = n' in converter
+assert 'progress.totalItems' in activity and '樣本數進度不代表剩餘時間' in activity
+assert 'presetDisplayName' in picker_ui and 'renameSinglePresetTracks' in activity
+assert 'AndroidVorbisSampleDecoder.Session()' in converter
+assert 'val rawPcm = ByteArray(' in converter
+print('PASS: correct SF3 progress, bank/preset aliases, reusable Vorbis decoder and SAF suffix browser')
