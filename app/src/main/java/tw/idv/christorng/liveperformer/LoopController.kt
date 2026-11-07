@@ -1073,6 +1073,24 @@ class LoopController(context: Context) {
         }
     }
 
+    /** Only tracks still bearing an auto-generated title are updated when their
+     * one-preset SoundFont is renamed. Explicit user track names stay unchanged. */
+    @Synchronized fun renameSinglePresetTracks(
+        fontId: String, oldNames: List<String>, newName: String
+    ) {
+        val old = oldNames.map(InstrumentNaming::clean).filter { it.isNotBlank() }.toSet()
+        val target = InstrumentNaming.clean(newName)
+        if (target.isBlank()) return
+        var updated = false
+        for (track in tracks) {
+            if (track.fontId == fontId && track.name in old) {
+                track.name = target
+                updated = true
+            }
+        }
+        if (updated) changed()
+    }
+
     @Synchronized fun renameSelected(name: String) = renameTrack(selectedId, name)
 
     @Synchronized fun renameTrack(id: Int, name: String) {
