@@ -18,7 +18,7 @@ import java.util.Locale
  * authorized folder and enforce suffixes ourselves, without storage permission. */
 internal enum class FilteredFileKind { SOUNDFONT, PROJECT }
 
-private data class BrowserEntry(
+internal data class BrowserEntry(
     val documentId: String,
     val name: String,
     val isFolder: Boolean,
@@ -90,8 +90,8 @@ internal fun FilteredDocumentBrowser(
         title = { Text(if (kind == FilteredFileKind.SOUNDFONT) "匯入 SoundFont" else "匯入專案") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("僅顯示資料夾與" + if (kind == FilteredFileKind.SOUNDFONT)
-                    " .sf2、.sf3、.zip、.xz 檔案" else " .lvp、.lvpt 檔案",
+                Text("僅顯示資料夾與" + (if (kind == FilteredFileKind.SOUNDFONT)
+                    " .sf2、.sf3、.zip、.xz 檔案" else " .lvp、.lvpt 檔案"),
                     style = MaterialTheme.typography.bodySmall)
                 Text("位置：${folders.joinToString(" / ") { it.second }}",
                     style = MaterialTheme.typography.bodySmall)
