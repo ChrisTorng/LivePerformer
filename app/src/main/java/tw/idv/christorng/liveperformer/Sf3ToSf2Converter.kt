@@ -326,6 +326,9 @@ internal object AndroidVorbisSampleDecoder : VorbisSampleDecoder {
      * reconfiguring and restarting for each Ogg stream's own Vorbis headers. */
     class Session : VorbisSampleDecoder, AutoCloseable {
         private var codec: MediaCodec? = null
+        // Recycle small PCM buffers for all samples in this conversion.
+        private val rawPcm = ByteArray(64 * 1024)
+        private val floatPcm = ByteArray(32 * 1024)
         override fun decode(
             source: File, offset: Long, bytes: Long, target: RandomAccessFile, sampleRate: Int
         ): Long {
@@ -355,8 +358,6 @@ internal object AndroidVorbisSampleDecoder : VorbisSampleDecoder {
             var consecutiveIdle = 0
             val info = MediaCodec.BufferInfo()
             var frames = 0L
-            val rawPcm = ByteArray(64 * 1024)
-            val floatPcm = ByteArray(32 * 1024)
             while (!outputDone) {
                 var madeProgress = false
                 if (!inputDone) {
