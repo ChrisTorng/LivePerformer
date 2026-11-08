@@ -685,9 +685,50 @@ class LoopController(context: Context) {
         if (type == NativeEngine.NOTE_ON || type == NativeEngine.NOTE_OFF) publish()
     }
 
+    /** MPK-only defaults work before any per-project routes have been saved. */
+    private fun defaultMpkCcRoute(event: MidiEvent): MidiRoute? {
+        if (event.kind != 0xb0 ||
+            !event.deviceName.contains("MPK", ignoreCase = true)) return null
+        val number = event.data1
+        val sameDevice: (MidiRoute) -> Boolean = {
+            it.deviceKey == "*" || it.deviceKey == event.deviceKey
+        }
+        if (event.channel == 1 && number in 20..35) {
+            val hasEditedPadBank = midiRoutes.any {
+                sameDevice(it) && it.kind == "cc" && it.channel in setOf(-1, 1) &&
+                    it.first <= 35 && it.last >= 20
+            }
+            if (hasEditedPadBank) return null
+            val (action, slot) = when (number) {
+                20 -> "play-stop" to -1
+                21 -> "record-toggle" to -1
+                22 -> "metronome-toggle" to -1
+                in 23..27 -> "slot-solo" to (number - 23)
+                in 28..34 -> "slot-mute" to (number - 28)
+                else -> "mute-all" to -1
+            }
+            return MidiRoute(-1, event.deviceKey, 1, "cc", number, number, 0,
+                action, slot, ccMode = "press-toggle")
+        }
+        if (event.channel == 0 && number in 1..8) {
+            val hasEditedKnobs = midiRoutes.any {
+                sameDevice(it) && it.kind == "cc" && it.channel in setOf(-1, 0) &&
+                    it.action in setOf("slot-volume", "master")
+            }
+            if (hasEditedKnobs) return null
+            val slot = number - 1
+            return MidiRoute(-1, event.deviceKey, 0, "cc", number, number, 0,
+                if (slot < 7) "slot-volume" else "master",
+                if (slot < 7) slot else -1)
+        }
+        return null
+    }
+
     /** Physical source channel is independent from the synth's assigned track channel. */
     @Synchronized fun onExternalMidi(event: MidiEvent) {
-        val routes = midiRoutes.filter { it.matches(event) }
+        val configured = midiRoutes.filter { it.matches(event) }
+        val routes = if (configured.isNotEmpty()) configured
+            else defaultMpkCcRoute(event)?.let(::listOf) ?: emptyList()
         if (routes.isNotEmpty()) {
             for (route in routes) {
                 val track = tracks.firstOrNull { it.id == route.trackId }
@@ -755,8 +796,22 @@ class LoopController(context: Context) {
             }
             return
         }
+        // MPK Note Bank B stays Bass even in projects without saved routing.
+        if (event.channel == 1 && event.deviceName.contains("MPK", ignoreCase = true) &&
+            event.kind in setOf(0x80, 0x90) && event.data1 in 44..51) {
+            val bass = tracks.firstOrNull {
+                it.name.contains("Bass", ignoreCase = true) || it.name.contains("貝斯") ||
+                    it.category == "貝斯"
+            }
+            if (bass != null) {
+                val velocity = if (event.kind == 0x90) event.data2 else 0
+                dispatchToTrack(bass, if (velocity > 0) NativeEngine.NOTE_ON
+                    else NativeEngine.NOTE_OFF,
+                    MidiPitch.scale(36, event.data1 - 44, "major"), velocity)
+                return
+            }
+        }
         // MPK Bank A also works in projects with no explicit MIDI routes.
-        // Bank B and arbitrary keyboards are unaffected.
         if (event.channel == 1 && event.deviceName.contains("MPK", ignoreCase = true) &&
             event.kind in setOf(0x80, 0x90) &&
             event.data1 in DrumPads.FIRST_MPK_NOTE..DrumPads.LAST_MPK_NOTE) {
