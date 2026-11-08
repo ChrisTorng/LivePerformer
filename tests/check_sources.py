@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.4.9' in workflow and 'versionCode = 18' in gradle
+assert 'v0.4.10' in workflow and 'versionCode = 19' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -205,7 +205,16 @@ assert 'fun forPreset(' in drum and 'fun reset(' in drum
 assert 'drum-pads' in routing and 'drum-pads' in looper and 'drum-pads' in routing_ui
 assert 'drumMaps.forPreset(' in looper and 'sendToSynth(track, e.type' in looper
 assert 'importDrumMap' in activity and 'openDrumMap' in activity
-assert 'LivePerformer-v0.4.9.apk' in workflow
+assert 'LivePerformer-v0.4.10.apk' in workflow
 assert (root/'drum-maps/gm-standard.drummap.json').exists()
 assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/DrumPadsTest.kt').exists()
 print('PASS: v0.4.9 global eight-pad drum mapping and versioned APK')
+
+# v0.4.10: CC controls are no longer sound notes. Hardware Momentary stays safe for Bass.
+assert 'applyMpkMiniMk2ControlsPreset' in looper
+assert 'ccMode' in looper and 'press-toggle' in looper
+assert 'slot-volume' in looper and 'slot-mute' in looper and 'slot-solo' in looper
+assert 'firstKnobCc' in looper and 'mute-all' in looper
+assert 'knobFirstCc' in routing_ui and 'confirmControlsPreset' in routing_ui
+assert (root/'app/src/androidTest/java/tw/idv/christorng/liveperformer/MpkControlsAndroidTest.kt').exists()
+print('PASS: v0.4.10 MPK dual Note banks, CC A/B switch banks and eight volume knobs')
