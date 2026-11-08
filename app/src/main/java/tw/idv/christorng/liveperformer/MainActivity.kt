@@ -182,7 +182,7 @@ private fun PerformerScreen() {
     val midiInputRef = remember { mutableStateOf<MidiInput?>(null) }
     var baseNote by remember { mutableIntStateOf(settings.getInt("baseNote", 48).coerceIn(0, 96)) }
     var velocity by remember { mutableFloatStateOf(settings.getFloat("velocity", 100f).coerceIn(1f, 127f)) }
-    var gain by remember { mutableFloatStateOf(settings.getFloat("gain", 0.8f).coerceIn(0.1f, 1.5f)) }
+    var gain by remember { mutableFloatStateOf(settings.getFloat("gain", 0.8f).coerceIn(0f, 1.5f)) }
     var routeRevision by remember { mutableIntStateOf(0) }
     var requestedOutputId by remember { mutableIntStateOf(0) } // Device IDs are ephemeral: do not persist.
     var outputs by remember { mutableStateOf(emptyList<AudioDeviceInfo>()) }
@@ -1122,7 +1122,7 @@ private fun PerformerScreen() {
                 gain = it
                 NativeEngine.setGain(it)
                 settings.edit().putFloat("gain", it).apply()
-            }, valueRange = 0.1f..1.5f)
+            }, valueRange = 0f..1.5f)
             Text("音訊輸出", style = MaterialTheme.typography.titleMedium)
             ExposedDropdownMenuBox(expanded = showOutputs, onExpandedChange = { showOutputs = it && !restarting }) {
                 OutlinedTextField(
