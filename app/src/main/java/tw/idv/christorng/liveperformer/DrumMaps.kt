@@ -28,7 +28,7 @@ data class DrumMap(val name: String, val notes: List<Int>,
                    val bank: Int? = null, val program: Int? = null) {
     init {
         require((bank == null && program == null) ||
-            (bank in 0..16383 && program in 0..127)) { "bank / program 必須同時指定" }
+            (bank != null && program != null && bank in 0..16383 && program in 0..127)) { "bank / program 必須同時指定" }
         require(notes.size == DrumPads.keys.size && notes.all { it in 0..127 }) {
             "鼓組對應須完整提供 8 個 MIDI Note（0–127）"
         }
