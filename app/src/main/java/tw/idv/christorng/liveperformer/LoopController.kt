@@ -865,17 +865,29 @@ class LoopController(context: Context) {
         } else if (!putMidiRoute(null, deviceKey, 1, "note",
                 36, 43, drums.id, "drum-pads")) return false
 
-        // Optional historical Bank B Note 44–51 -> Bass remains untouched.
+        // Note Bank B is always Bass (one octave of chosen major/minor key).
         val bass = tracks.firstOrNull {
             it.id != drums.id && (it.name.contains("Bass", true) ||
                 it.name.contains("貝斯") || it.category == "貝斯")
         }
-        if (bass != null && midiRoutes.none {
+        if (bass != null) {
+            val existingBass = midiRoutes.firstOrNull {
                 (it.deviceKey == deviceKey || it.deviceKey == "*") &&
-                (it.channel == 1 || it.channel == -1) &&
-                it.kind == "note" && it.first <= 51 && it.last >= 44
-            }) {
-            putMidiRoute(null, deviceKey, 1, "note", 44, 51, bass.id, "note")
+                    (it.channel == 1 || it.channel == -1) &&
+                    it.kind == "note" && it.first <= 51 && it.last >= 44
+            }
+            if (existingBass == null) {
+                if (!putMidiRoute(null, deviceKey, 1, "note", 44, 51,
+                        bass.id, "scale", 36, "major")) return false
+            } else if (existingBass.first == 44 && existingBass.last == 51 &&
+                existingBass.trackId == bass.id && existingBass.action == "note" &&
+                existingBass.noteBase == -1) {
+                // Migrate only the unmodified old passthrough default.
+                if (!putMidiRoute(existingBass.id, existingBass.deviceKey,
+                        existingBass.channel, "note", 44, 51, bass.id,
+                        "scale", 36, "major")) return false
+            }
+            // Existing custom key, scale or individual note map is preserved.
         }
         return true
     }
