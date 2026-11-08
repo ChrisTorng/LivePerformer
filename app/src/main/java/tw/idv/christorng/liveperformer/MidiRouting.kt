@@ -21,7 +21,7 @@ data class MidiDeviceView(
 )
 
 /** A project-level rule. Track IDs refer to project tracks, not physical MIDI channels.
- * action: note (passthrough/chromatic), scale, custom, volume, pan, master, select-track. */
+ * action: note (passthrough/chromatic), scale, custom, drum-pads (fixed 8 roles), controls. */
 data class MidiRoute(
     val id: Int,
     val deviceKey: String = "*",
@@ -45,12 +45,13 @@ data class MidiRoute(
 
     /** Convert a Note/CC pad to a playable note. CC pads should be Momentary (127 press / 0 release). */
     fun noteFor(event: MidiEvent): Pair<Int, Int>? {
-        if (action !in setOf("note", "scale", "custom") || !matches(event)) return null
+        if (action !in setOf("note", "scale", "custom", "drum-pads") || !matches(event)) return null
         val sourceDown = if (kind == "note") event.kind == 0x90 && event.data2 > 0
             else event.data2 >= 64
         val offset = event.data1 - first
         val pitch = when (action) {
             "custom" -> noteMap.getOrNull(offset) ?: return null
+            "drum-pads" -> DrumPads.gmNotes.getOrNull(offset) ?: return null
             "scale" -> MidiPitch.scale(noteBase.coerceAtLeast(0), offset, scaleMode)
             else -> if (noteBase >= 0) noteBase + offset else event.data1
         }
