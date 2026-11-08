@@ -33,8 +33,27 @@ data class MidiRoute(
     val action: String = "note",
     val noteBase: Int = -1,
     val scaleMode: String = "major",
-    val noteMap: List<Int> = emptyList()
+    val noteMap: List<Int> = emptyList(),
+    /** legacy keeps pre-v0.4.9 behavior; press-toggle toggles on CC >=64, ignoring release. */
+    val ccMode: String = "legacy"
 ) {
+    companion object {
+        val ccModes = setOf("legacy", "press-toggle", "absolute", "momentary")
+    }
+
+    /** A momentary hardware Pad can toggle app state without affecting Note playback. */
+    fun targetState(event: MidiEvent, current: Boolean): Boolean? {
+        if (event.kind != 0xb0) return null
+        return when (ccMode) {
+            "press-toggle", "momentary" -> if (event.data2 >= 64) !current else null
+            "absolute" -> event.data2 >= 64
+            else -> when (action) {
+                "mute", "solo", "slot-mute", "slot-solo" -> event.data2 >= 64
+                else -> if (event.data2 >= 64) !current else null
+            }
+        }
+    }
+
     fun matches(event: MidiEvent): Boolean =
         (deviceKey == "*" || deviceKey == event.deviceKey) &&
             (channel == -1 || channel == event.channel) &&
