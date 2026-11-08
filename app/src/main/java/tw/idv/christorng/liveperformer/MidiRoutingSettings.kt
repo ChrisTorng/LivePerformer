@@ -49,7 +49,7 @@ fun MidiRoutingSettings(
     var action by remember { mutableStateOf("note") }
     var noteBase by remember { mutableStateOf("-1") }
     var ccMode by remember { mutableStateOf("press-toggle") }
-    var knobFirstCc by remember { mutableIntStateOf(1) }
+    var knobFirstCc by remember { mutableIntStateOf(looper.defaultKnobFirstCc("*")) }
     var confirmControlsPreset by remember { mutableStateOf(false) }
     var scaleMode by remember { mutableStateOf("major") }
     var key by remember { mutableIntStateOf(0) }
@@ -137,7 +137,7 @@ fun MidiRoutingSettings(
             devices.firstOrNull { it.key == deviceKey }?.name ?: "已儲存的離線裝置",
             listOf("*" to "任何 MIDI 裝置") + devices.filter { it.outputPorts > 0 }
                 .map { it.key to (it.name + " #" + it.id) },
-            { deviceKey = it }, Modifier.fillMaxWidth())
+            { deviceKey = it; knobFirstCc = looper.defaultKnobFirstCc(it) }, Modifier.fillMaxWidth())
 
         Text("輸入 Channel／訊息", style = MaterialTheme.typography.labelLarge)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
