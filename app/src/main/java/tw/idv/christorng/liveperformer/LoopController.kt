@@ -61,6 +61,7 @@ class LoopController(context: Context) {
     )
 
     private val prefs = context.applicationContext.getSharedPreferences("loop-session", Context.MODE_PRIVATE)
+    private val drumMaps = DrumMapStore(context)
     private val tracks = mutableListOf<Track>()
     private val midiRoutes = mutableListOf<MidiRoute>()
     private var nextMidiRouteId = 1
@@ -239,7 +240,7 @@ class LoopController(context: Context) {
         val importedRoutes = mutableListOf<MidiRoute>()
         val routeArray = root.optJSONArray("midiRoutes") ?: JSONArray()
         require(routeArray.length() <= 64) { "MIDI 路由超過上限" }
-        val knownActions = setOf("note", "scale", "custom", "volume", "pan", "master", "select-track",
+        val knownActions = setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "select-track",
             "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track")
         for (index in 0 until routeArray.length()) {
             val item = routeArray.getJSONObject(index)
@@ -255,7 +256,8 @@ class LoopController(context: Context) {
                 "MIDI 路由格式不正確"
             }
             val mapArray = item.optJSONArray("noteMap") ?: JSONArray()
-            require(mapArray.length() <= 16 && (action != "custom" ||
+            require((action != "drum-pads" || (kind in setOf("note", "cc") && last - first == 7)) &&
+                mapArray.length() <= 16 && (action != "custom" ||
                 mapArray.length() == last - first + 1)) { "自訂 MIDI 音符映射長度不符" }
             val map = (0 until mapArray.length()).map { mapArray.getInt(it) }
             require(map.all { it in -1..127 }) { "自訂 MIDI 音高無效" }
@@ -557,7 +559,7 @@ class LoopController(context: Context) {
             for (track in tracks) if (!track.muted && (!anySolo || track.solo) && !(recordingTrack == track.id && takeHasNotes)) for (e in track.events) {
                 val occurrence = LoopMath.nextOccurrence(lastScheduled, e.tick, length)
                 if (occurrence <= absoluteTick && occurrence > absoluteTick - length) {
-                    NativeEngine.midi(e.type, track.channel, e.note, e.velocity)
+                    sendToSynth(track, e.type, e.note, e.velocity)
                     displayKey(track.channel, e.type, e.note)
                 }
             }
@@ -641,6 +643,21 @@ class LoopController(context: Context) {
         dispatchToTrack(selected, type, a, b)
     }
 
+    private fun isDrumTrack(track: Track): Boolean =
+        track.channel == 9 || track.bank >= 128 || track.category == "鼓組"
+
+    private fun sendToSynth(track: Track, type: Int, canonical: Int, velocity: Int) {
+        val drumMap = if (isDrumTrack(track)) drumMaps.forFont(track.fontId) else null
+        // SoundFont exclusiveClass is authoritative. NoteOff is a helpful fallback
+        // for open-hat samples that respond to release; some one-shots ignore it.
+        if (drumMap != null && type == NativeEngine.NOTE_ON && velocity > 0 && canonical == 42)
+            NativeEngine.midi(NativeEngine.NOTE_OFF, track.channel,
+                drumMap.outputNote(46), 0)
+        NativeEngine.midi(type, track.channel,
+            drumMap?.outputNote(canonical) ?: canonical, velocity)
+    }
+
+    /** Record canonical GM drum roles, translate only when sending to synth. */
     private fun dispatchToTrack(track: Track, type: Int, a: Int, b: Int) {
         advance(System.nanoTime())
         updateRecording()
@@ -657,7 +674,7 @@ class LoopController(context: Context) {
         }
         displayKey(track.channel, type, a)
         if (!track.muted && (tracks.none { it.solo } || track.solo))
-            NativeEngine.midi(type, track.channel, a, b)
+            sendToSynth(track, type, a, b)
         if (type == NativeEngine.NOTE_ON || type == NativeEngine.NOTE_OFF) publish()
     }
 
@@ -668,11 +685,19 @@ class LoopController(context: Context) {
             for (route in routes) {
                 val track = tracks.firstOrNull { it.id == route.trackId }
                 when (route.action) {
-                    "note", "scale", "custom" -> if (track != null) {
+                    "note", "scale", "custom", "drum-pads" -> if (track != null) {
                         val result = route.noteFor(event) ?: continue
+                        // Treat the historical MPK 36..43 raw route as fixed drum pads.
+                        val legacyMpk = isDrumTrack(track) && route.action == "note" &&
+                            route.kind == "note" && route.noteBase == -1 &&
+                            route.first == 36 && route.last == 43 &&
+                            event.deviceName.contains("MPK", ignoreCase = true)
+                        val canonical = if (legacyMpk)
+                            DrumPads.canonicalForPad(event.data1) ?: result.first
+                            else result.first
                         dispatchToTrack(track, if (result.second > 0)
                             NativeEngine.NOTE_ON else NativeEngine.NOTE_OFF,
-                            result.first, result.second)
+                            canonical, result.second)
                     }
                     "volume", "pan" -> if (track != null) {
                         NativeEngine.midi(NativeEngine.CONTROLLER, track.channel,
@@ -700,6 +725,19 @@ class LoopController(context: Context) {
                 }
             }
             return
+        }
+        // MPK Bank A also works in projects with no explicit MIDI routes.
+        // Bank B and arbitrary keyboards are unaffected.
+        if (event.channel == 1 && event.deviceName.contains("MPK", ignoreCase = true) &&
+            event.kind in setOf(0x80, 0x90) &&
+            event.data1 in DrumPads.FIRST_MPK_NOTE..DrumPads.LAST_MPK_NOTE) {
+            tracks.firstOrNull(::isDrumTrack)?.let { drum ->
+                val velocity = if (event.kind == 0x90) event.data2 else 0
+                dispatchToTrack(drum, if (velocity > 0) NativeEngine.NOTE_ON
+                    else NativeEngine.NOTE_OFF,
+                    DrumPads.canonicalForPad(event.data1)!!, velocity)
+                return
+            }
         }
         // Preserve the original keyboard behaviour until a route is configured.
         // A partially mapped pad bank must not leak into the currently selected instrument.
@@ -734,7 +772,7 @@ class LoopController(context: Context) {
         if ((id == null && midiRoutes.size >= 48) || (id != null && midiRoutes.none { it.id == id }) ||
             deviceKey.length > 256 || channel !in -1..15 ||
             kind !in setOf("note", "cc", "program") ||
-            action !in setOf("note", "scale", "custom", "volume", "pan", "master", "select-track",
+            action !in setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "select-track",
                 "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track") ||
             (kind == "program" && action != "select-track") ||
             (kind != "program" && action == "select-track") ||
@@ -746,6 +784,7 @@ class LoopController(context: Context) {
                 "metronome-toggle", "next-track")) ||
             noteBase !in -1..127 || scaleMode !in MidiPitch.modes ||
             (action == "scale" && noteBase < 0) ||
+            (action == "drum-pads" && (kind !in setOf("note", "cc") || last - first != 7)) ||
             (action == "custom" && (last - first + 1 > 16 ||
                 noteMap.size != last - first + 1 || noteMap.any { it !in -1..127 })))
             return false
@@ -772,24 +811,56 @@ class LoopController(context: Context) {
         if (midiRoutes.isNotEmpty()) { midiRoutes.clear(); changed() }
     }
 
-    /** Matches the pad-note numbers shown in the user's MPK mini MK2 Editor screenshot. */
+    /** MPK channel 2 Note 36–43 are fixed musical roles, not pitches. */
     @Synchronized fun applyMpkMiniMk2Preset(deviceKey: String): Boolean {
-        val drums = tracks.firstOrNull { it.category == "鼓組" || it.bank == 128 } ?: return false
+        val drums = tracks.firstOrNull(::isDrumTrack) ?: return false
+        val existing = midiRoutes.firstOrNull {
+            (it.deviceKey == deviceKey || it.deviceKey == "*") &&
+                (it.channel == 1 || it.channel == -1) &&
+                it.kind == "note" && it.first <= 43 && it.last >= 36
+        }
+        if (existing != null) {
+            // Upgrade the historical passthrough; never replace user-customized routes.
+            if (existing.first != 36 || existing.last != 43 ||
+                existing.trackId != drums.id) return false
+            if (existing.action != "drum-pads" &&
+                (existing.action != "note" || existing.noteBase != -1)) return false
+            if (existing.action != "drum-pads" &&
+                !putMidiRoute(existing.id, existing.deviceKey, existing.channel,
+                    "note", 36, 43, drums.id, "drum-pads")) return false
+        } else if (!putMidiRoute(null, deviceKey, 1, "note",
+                36, 43, drums.id, "drum-pads")) return false
+
+        // Optional historical Bank B Note 44–51 -> Bass remains untouched.
         val bass = tracks.firstOrNull {
             it.id != drums.id && (it.name.contains("Bass", true) ||
                 it.name.contains("貝斯") || it.category == "貝斯")
-        } ?: return false
-        val desired = listOf(Triple(36, 43, drums.id), Triple(44, 51, bass.id))
-        val missing = desired.filterNot { (first, last, trackId) ->
-            midiRoutes.any { it.deviceKey == deviceKey && it.channel == 1 &&
-                it.kind == "note" && it.first == first && it.last == last &&
-                it.trackId == trackId && it.action == "note" && it.noteBase == -1 }
         }
-        if (midiRoutes.size + missing.size > 48) return false
-        missing.forEach { (first, last, trackId) ->
-            addMidiRoute(deviceKey, 1, "note", first, last, trackId, "note")
+        if (bass != null && midiRoutes.none {
+                (it.deviceKey == deviceKey || it.deviceKey == "*") &&
+                (it.channel == 1 || it.channel == -1) &&
+                it.kind == "note" && it.first <= 51 && it.last >= 44
+            }) {
+            putMidiRoute(null, deviceKey, 1, "note", 44, 51, bass.id, "note")
         }
         return true
+    }
+
+    /** Global per-font mapping is independent of project serialization. */
+    @Synchronized fun drumMapName(fontId: String): String = drumMaps.forFont(fontId).name
+
+    @Synchronized fun importDrumMap(fontId: String, json: String): String {
+        require(fontIndexes.containsKey(fontId)) { "找不到目標音色庫" }
+        val map = drumMaps.install(fontId, json)
+        NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
+        publish()
+        return map.name
+    }
+
+    @Synchronized fun resetDrumMap(fontId: String) {
+        drumMaps.reset(fontId)
+        NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
+        publish()
     }
 
     /** One-tap example: MPK mini MK2 CC Pad A (20..27) plays C2 major on Bass. */
