@@ -647,7 +647,7 @@ class LoopController(context: Context) {
         track.channel == 9 || track.bank >= 128 || track.category == "鼓組"
 
     private fun sendToSynth(track: Track, type: Int, canonical: Int, velocity: Int) {
-        val drumMap = if (isDrumTrack(track)) drumMaps.forFont(track.fontId) else null
+        val drumMap = if (isDrumTrack(track)) drumMaps.forPreset(track.fontId, track.bank, track.program) else null
         // SoundFont exclusiveClass is authoritative. NoteOff is a helpful fallback
         // for open-hat samples that respond to release; some one-shots ignore it.
         if (drumMap != null && type == NativeEngine.NOTE_ON && velocity > 0 && canonical == 42)
@@ -847,7 +847,7 @@ class LoopController(context: Context) {
     }
 
     /** Global per-font mapping is independent of project serialization. */
-    @Synchronized fun drumMapName(fontId: String): String = drumMaps.forFont(fontId).name
+    @Synchronized fun drumMapName(fontId: String): String = drumMaps.description(fontId)
 
     @Synchronized fun importDrumMap(fontId: String, json: String): String {
         require(fontIndexes.containsKey(fontId)) { "找不到目標音色庫" }
