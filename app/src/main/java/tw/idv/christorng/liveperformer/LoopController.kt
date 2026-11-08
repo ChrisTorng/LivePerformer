@@ -728,7 +728,7 @@ class LoopController(context: Context) {
     @Synchronized fun onExternalMidi(event: MidiEvent) {
         val configured = midiRoutes.filter { it.matches(event) }
         val routes = if (configured.isNotEmpty()) configured
-            else defaultMpkCcRoute(event)?.let(::listOf) ?: emptyList()
+            else defaultMpkCcRoute(event)?.let { listOf(it) } ?: emptyList()
         if (routes.isNotEmpty()) {
             for (route in routes) {
                 val track = tracks.firstOrNull { it.id == route.trackId }
