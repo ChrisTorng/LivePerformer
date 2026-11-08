@@ -1,4 +1,4 @@
-# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.9)
+# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.10)
 
 **Status: early source prototype, not yet device-verified.** Initial target: Samsung Galaxy A25 5G, USB MIDI keyboard, wired 3.5 mm headphones. v0.2.1 adds an ergonomic single-screen interface and v0.2 includes an experimental MIDI-only loop recorder; physical device performance remains unverified.
 
@@ -79,7 +79,7 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 
 - System -> MIDI testing lists connected MIDI devices and their own 50-event logs (channel, note/CC/program/pitch bend; no repeated timestamps or source names). Clock (0xF8) and Active Sensing (0xFE) are excluded to avoid drowning out test data.
 - Project -> MIDI routing stores up to 48 device/channel/kind/number-range/target/action rules under the `midiRoutes` JSON field. Note or momentary CC pads can play different tracks, optionally transposed or mapped to an eight-step major scale.
-- The MPK mini MK2 channel-2 Note 36–43 Pad Bank A is a fixed eight-role drum layout (GM 36/38/42/46/45/50/51/49), independent of the selected SoundFont. The optional Note 44–51 Bass shortcut and existing CC Bank B stage controls remain separate. Source keyboards default to playing the selected track; extra CC mappings can be manually added.
+- The MPK mini MK2 channel-2 Note 36–43 Pad Bank A is a fixed eight-role drum layout (GM 36/38/42/46/45/50/51/49), independent of the selected SoundFont. The Note Bank B (44–51) now defaults to Bass C2 major, adjustable via the existing route editor for key, major/minor mode, octave and each note; the formerly mixed CC Bank B controls are replaced by the new all-Toggle switch profile. Source keyboards default to playing the selected track; extra CC mappings can be manually added.
 - Explicit CC rules may control track volume CC7, track pan CC10, or master FluidSynth gain; Program Change is diagnostic-only unless mapped to select-track.
 - MIDI output Clock is selectable under System → MIDI testing and sends Start/Stop and MIDI Clock at 24 PPQN from the existing 4-ms scheduler. MPK mini MK2 must use Editor Clock External and Send To RAM for ARP external synchronization; clock timing is best-effort, not sample-accurate.
 - Existing projects without `midiRoutes` remain supported. MIDI output ID is not persisted across reconnect. Two identical devices without distinguishable serial numbers share a mapping identity.
@@ -148,7 +148,7 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - Files directly under Downloads, including the user's existing SF3/XZ, stay exactly where they are: use the direct system picker and search. The system picker may show other extensions because Android scopes it by MIME; LivePerformer verifies suffixes before parsing.
 - Provider and project import behavior have Android emulator integration tests for root listing, copying to the inbox, duplicate-safe project import, and rejecting unrelated extensions.
 
-## v0.4.9 — 固定八 Pad 鼓聲、可匯入 SoundFont Drum Map
+## v0.4.9 groundwork — 固定八 Pad 鼓聲、可匯入 SoundFont Drum Map
 
 - MPK mini MKII **Pad Bank A (channel 2, Note 36–43)**: Pad 1 Bass Drum=GM36, 2 Snare=38, 3 Closed Hi-hat=42, 4 Open Hi-hat=46, 5 Low Tom=45, 6 High Tom=50, 7 Ride=51, 8 Crash=49. Only the Pad number comes from the hardware; the sound uses the current kit mapping.
 - A matching MPK Bank A uses this assignment automatically when the project has a drum track; the project-level “MPK mini MK2 固定鼓 Pad” preset creates an explicit `drum-pads` route. Historical unmodified Note 36–43 drum passthrough routes are interpreted as these roles and can be upgraded by the preset button. Custom user routes are not replaced automatically. Bank B (Note 44–51 and CC20–35) is not changed.
@@ -158,3 +158,18 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - Example downloadable mapping: [gm-standard.drummap.json](drum-maps/gm-standard.drummap.json). Replace the eight `notes` MIDI integers according to a kit's documentation; the `format` and eight semantic keys must remain unchanged. Do **not** use named octave pitches (C2/C3), as naming conventions differ.
 - Hi-hat closing sends NoteOff for the mapped open-hat note just before NoteOn for the mapped closed-hat note. Correct SF2 `exclusiveClass` is still necessary to guarantee instant choking for samples that ignore NoteOff. Merely importing a mapping file cannot synthesize missing hi-hat choking behavior in an unsuitable SoundFont.
 - No separate Android file-storage permission is needed for importing a mapping; the user explicitly selects the document through the system file picker.
+
+## v0.4.10 — MPK mini MKII four bank roles and eight mixer knobs
+
+**Important hardware limitation:** In the Akai MPK mini MKII Editor, each pad's physical Toggle/Momentary state is shared between its Note and CC modes. If it is set to hardware Toggle, a Note Bank B Bass note latches on until the second press. **Keep all 16 pads (A/B) hardware Momentary** and let the app make **CC** pads toggle on each press; note releases then work normally.
+
+- **Note Bank A** (MPK Pad MIDI Channel 2, Note 36–43): the fixed GM 8-role drum layout; imported SoundFont maps still work.
+- **Note Bank B** (MPK Pad MIDI Channel 2, Note 44–51): eight notes of **Bass C2 major by default** (C2 D2 E2 F2 G2 A2 B2 C3); adjust key, major/natural-minor mode, octave, or individual pitches by editing the existing Bass MIDI route.
+- **CC Bank A** (MPK Pad MIDI Channel 2, CC 20–27): Pad1 Play/Stop; 2 Record/Stop; 3 Metronome On/Off; 4–8 Solo tracks 1–5. Each physical press (CC=127) toggles the current app state; release (CC=0) has no effect.
+- **CC Bank B** (MPK Pad MIDI Channel 2, CC 28–35): Pad1–7 Mute tracks 1–7 by current displayed track order; Pad8 Mute/Unmute All. Again, the app software toggles from a momentary press.
+- **Knobs K1–K7** (MPK Keybed/Controls Channel 1): volume CC7 for the current first seven displayed tracks; K8 controls the master FluidSynth gain from silence (0.0) to 1.5. Assign knobs MIDI CC 1–8 (minimal Editor changes; possible X-Y joystick CC1 conflict) or better **CC 70–77**, choosing the same value in the app. Knobs send continuously and never behave as toggle switches.
+- In **Project Settings → MIDI Routing**, first apply "Note A 鼓組 / Note B Bass", then "CC A/B 控制與 8 Knob 音量". Applying the second preset explicitly replaces the MPK CC 20–35 and the selected knob 8-CC interval **on the specified device**. It does not overwrite the Note routes or other controls. Afterward, any route can be edited individually: kind, channel, note range, action, target track slot and `ccMode`.
+- Individual CC routes support **press-toggle** (app-state switch on each hardware Momentary press), **absolute** (hardware latch CC127 = ON / CC0 = OFF), **momentary** (one-shot press) and **legacy** (preserve older version's handling). Existing imported v0.4.8 project routing uses `legacy` unless edited; the new preset uses `press-toggle`.
+- Position-based routes follow the current track order. Missing tracks do nothing; new tracks instantly become addressable when inserted at a matching position. The global master knob works even if no track exists.
+- Akai's XY joystick may default to CC1 on keybed channel 1, which can collide with K1 if choosing CC1–8. Prefer assigning K1–K8 to CC70–77, LO 0, HI 127 using the Editor (then send to hardware).
+- **Potential future Momentary CC actions:** next/previous track, fill drum, tap tempo, one-shot sample, and clear-with-confirmation. Do not put one-shot actions into an on/off switch by default.
