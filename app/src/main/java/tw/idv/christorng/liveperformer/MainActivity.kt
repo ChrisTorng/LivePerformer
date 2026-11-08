@@ -353,10 +353,16 @@ private fun PerformerScreen() {
                     "只接受 .drummap.json 鼓組對應檔"
                 }
                 val json = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use {
-                        val buffer = CharArray(16385)
-                        val count = it.read(buffer)
-                        if (count < 0) "" else String(buffer, 0, count)
+                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+                        val text = StringBuilder()
+                        val buffer = CharArray(2048)
+                        while (true) {
+                            val count = reader.read(buffer)
+                            if (count < 0) break
+                            require(text.length + count <= 16384) { "鼓組對應檔超過 16 KiB" }
+                            text.append(buffer, 0, count)
+                        }
+                        text.toString()
                     } ?: error("無法讀取鼓組對應檔")
                 }
                 val name = looper.importDrumMap(fontId, json)
