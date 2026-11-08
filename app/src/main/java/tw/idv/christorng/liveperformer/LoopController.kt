@@ -241,7 +241,8 @@ class LoopController(context: Context) {
         val routeArray = root.optJSONArray("midiRoutes") ?: JSONArray()
         require(routeArray.length() <= 64) { "MIDI 路由超過上限" }
         val knownActions = setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "select-track",
-            "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track")
+            "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track",
+            "slot-volume", "slot-mute", "slot-solo", "mute-all")
         for (index in 0 until routeArray.length()) {
             val item = routeArray.getJSONObject(index)
             val kind = item.optString("kind", "note")
@@ -261,12 +262,18 @@ class LoopController(context: Context) {
                 mapArray.length() == last - first + 1)) { "自訂 MIDI 音符映射長度不符" }
             val map = (0 until mapArray.length()).map { mapArray.getInt(it) }
             require(map.all { it in -1..127 }) { "自訂 MIDI 音高無效" }
+            val ccMode = item.optString("ccMode", "legacy")
+            require(ccMode in MidiRoute.ccModes) { "CC 觸發模式無效" }
+            if (action in setOf("slot-volume", "slot-mute", "slot-solo"))
+                require(kind == "cc" && item.optInt("noteBase", -1) in 0..6 && trackId == 0) {
+                    "音軌位置必須是 1–7"
+                }
             val scaleMode = item.optString("scaleMode", "major")
             require(scaleMode in MidiPitch.modes) { "MIDI 調式無效" }
             importedRoutes += MidiRoute(item.optInt("id", index + 1),
                 item.optString("deviceKey", "*"), ch, kind, first, last,
                 trackId, action, item.optInt("noteBase", -1).coerceIn(-1, 127),
-                scaleMode, map)
+                scaleMode, map, ccMode)
         }
         val saved = root.getJSONArray("tracks")
         require(saved.length() in 0..16) { "樂器軌數量不正確" }
@@ -375,7 +382,7 @@ class LoopController(context: Context) {
                 .put("first", r.first).put("last", r.last)
                 .put("trackId", r.trackId).put("action", r.action)
                 .put("noteBase", r.noteBase).put("scaleMode", r.scaleMode)
-                .put("noteMap", JSONArray(r.noteMap)))
+                .put("noteMap", JSONArray(r.noteMap)).put("ccMode", r.ccMode))
         }
         root.put("midiRoutes", routes)
         val saved = JSONArray()
@@ -699,23 +706,45 @@ class LoopController(context: Context) {
                             NativeEngine.NOTE_ON else NativeEngine.NOTE_OFF,
                             canonical, result.second)
                     }
-                    "volume", "pan" -> if (track != null) {
-                        NativeEngine.midi(NativeEngine.CONTROLLER, track.channel,
-                            if (route.action == "volume") 7 else 10, event.data2)
+                    "volume", "pan", "slot-volume" -> {
+                        val target = if (route.action == "slot-volume")
+                            tracks.getOrNull(route.noteBase) else track
+                        if (target != null) {
+                            NativeEngine.midi(NativeEngine.CONTROLLER, target.channel,
+                                if (route.action == "pan") 10 else 7, event.data2)
+                        }
                     }
                     "master" -> masterVolumeFromMidi?.invoke(
-                        0.1f + event.data2.coerceIn(0, 127) / 127f * 1.4f)
-                    // Toggle CC sends alternating >=64 / <64. Set the requested state
-                    // rather than blindly toggling on every received message.
-                    "mute" -> if (track != null && event.kind == 0xb0)
-                        setTrackMuted(track.id, event.data2 >= 64)
-                    "solo" -> if (track != null && event.kind == 0xb0)
-                        setTrackSolo(track.id, event.data2 >= 64)
-                    // Momentary CC: act on press only, never on its release.
-                    "play-stop" -> if (event.kind == 0xb0 && event.data2 >= 64) playStop()
-                    "record-toggle" -> if (event.kind == 0xb0 && event.data2 >= 64) recordPause()
-                    "metronome-toggle" -> if (event.kind == 0xb0 && event.data2 >= 64)
-                        setMetronome(!metronome)
+                        event.data2.coerceIn(0, 127) / 127f * 1.5f)
+                    "mute", "slot-mute" -> {
+                        val target = if (route.action == "slot-mute")
+                            tracks.getOrNull(route.noteBase) else track
+                        if (target != null) route.targetState(event, target.muted)?.let {
+                            setTrackMuted(target.id, it)
+                        }
+                    }
+                    "solo", "slot-solo" -> {
+                        val target = if (route.action == "slot-solo")
+                            tracks.getOrNull(route.noteBase) else track
+                        if (target != null) route.targetState(event, target.solo)?.let {
+                            setTrackSolo(target.id, it)
+                        }
+                    }
+                    "mute-all" -> route.targetState(event,
+                        tracks.isNotEmpty() && tracks.all { it.muted })?.let { target ->
+                        tracks.forEach { setTrackMuted(it.id, target) }
+                    }
+                    "play-stop" -> route.targetState(event, playing)?.let { target ->
+                        if (target != playing) playStop()
+                    }
+                    "record-toggle" -> route.targetState(event,
+                        recordingTrack != null || armedTrack != null)?.let { target ->
+                        if (target != (recordingTrack != null || armedTrack != null)) recordPause()
+                    }
+                    "metronome-toggle" -> route.targetState(event, metronome)?.let {
+                        if (it != metronome) setMetronome(it)
+                    }
+                    // One-shot actions remain press-only, independent of physical latch mode.
                     "next-track" -> if (event.kind == 0xb0 && event.data2 >= 64 && tracks.isNotEmpty()) {
                         val current = tracks.indexOfFirst { it.id == selectedId }
                         selectTrack(tracks[(current + 1) % tracks.size].id)
@@ -767,22 +796,27 @@ class LoopController(context: Context) {
     @Synchronized fun putMidiRoute(
         id: Int?, deviceKey: String, channel: Int, kind: String, first: Int, last: Int,
         trackId: Int, action: String, noteBase: Int = -1,
-        scaleMode: String = "major", noteMap: List<Int> = emptyList()
+        scaleMode: String = "major", noteMap: List<Int> = emptyList(),
+        ccMode: String = "legacy"
     ): Boolean {
         if ((id == null && midiRoutes.size >= 48) || (id != null && midiRoutes.none { it.id == id }) ||
             deviceKey.length > 256 || channel !in -1..15 ||
             kind !in setOf("note", "cc", "program") ||
             action !in setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "select-track",
-                "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track") ||
+                "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track",
+                "slot-volume", "slot-mute", "slot-solo", "mute-all") ||
             (kind == "program" && action != "select-track") ||
             (kind != "program" && action == "select-track") ||
             (action in setOf("volume", "pan", "master", "mute", "solo",
-                "play-stop", "record-toggle", "metronome-toggle", "next-track") && kind != "cc") ||
+                "play-stop", "record-toggle", "metronome-toggle", "next-track",
+                "slot-volume", "slot-mute", "slot-solo", "mute-all") && kind != "cc") ||
             first !in 0..127 || last !in first..127 ||
             (trackId != 0 && tracks.none { it.id == trackId }) ||
             (trackId == 0) != (action in setOf("master", "play-stop", "record-toggle",
-                "metronome-toggle", "next-track")) ||
+                "metronome-toggle", "next-track", "slot-volume", "slot-mute", "slot-solo", "mute-all")) ||
             noteBase !in -1..127 || scaleMode !in MidiPitch.modes ||
+            ccMode !in MidiRoute.ccModes ||
+            (action in setOf("slot-volume", "slot-mute", "slot-solo") && noteBase !in 0..6) ||
             (action == "scale" && noteBase < 0) ||
             (action == "drum-pads" && (kind !in setOf("note", "cc") || last - first != 7)) ||
             (action == "custom" && (last - first + 1 > 16 ||
@@ -790,7 +824,7 @@ class LoopController(context: Context) {
             return false
         val candidate = MidiRoute(id ?: nextMidiRouteId++, deviceKey, channel, kind,
             first, last, trackId, action, noteBase, scaleMode,
-            if (action == "custom") noteMap.toList() else emptyList())
+            if (action == "custom") noteMap.toList() else emptyList(), ccMode)
         val oldIndex = midiRoutes.indexOfFirst { it.id == id }
         if (oldIndex < 0) midiRoutes += candidate else midiRoutes[oldIndex] = candidate
         changed()
@@ -863,49 +897,57 @@ class LoopController(context: Context) {
         publish()
     }
 
-    /** One-tap example: MPK mini MK2 CC Pad A (20..27) plays C2 major on Bass. */
-    @Synchronized fun applyMpkMiniMk2CcBassPreset(deviceKey: String): Boolean {
-        val bass = tracks.firstOrNull {
-            it.name.contains("Bass", true) || it.name.contains("貝斯") ||
-                it.category == "貝斯"
-        } ?: return false
-        if (midiRoutes.any {
-            (it.deviceKey == deviceKey || it.deviceKey == "*") &&
-                it.channel == 1 && it.kind == "cc" &&
-                it.first <= 27 && it.last >= 20
-        }) return false // Do not silently override an already-customized CC bank.
-        return putMidiRoute(null, deviceKey, 1, "cc", 20, 27,
-            bass.id, "scale", 36, "major")
-    }
-
-    /** Optional preset for the dedicated CC Bank B. The hardware must have
-     * pads 1..4 set to Toggle and pads 5..8 set to Momentary. */
-    @Synchronized fun applyMpkMiniMk2StagePreset(deviceKey: String): Boolean {
-        val drums = tracks.firstOrNull { it.category == "鼓組" || it.bank == 128 } ?: return false
-        val bass = tracks.firstOrNull { it.category == "貝斯" ||
-            it.name.contains("Bass", ignoreCase = true) ||
-            it.name.contains("貝斯") } ?: return false
-        val strings = tracks.firstOrNull { it.category == "弦樂" ||
-            it.name.contains("弦樂") } ?: return false
-        val lead = tracks.firstOrNull { it.id !in setOf(drums.id, bass.id, strings.id) &&
-            (it.name.contains("Lead", ignoreCase = true) ||
-             it.category.contains("主奏")) } ?: return false
-        if (midiRoutes.size + 8 > 48 ||
-            midiRoutes.any { (it.deviceKey == deviceKey || it.deviceKey == "*") &&
-                (it.channel == 1 || it.channel == -1) && it.kind == "cc" &&
-                it.first <= 35 && it.last >= 28 }) return false
-        val targets = listOf(drums.id, bass.id, strings.id, lead.id)
-        for (i in 0..3) {
-            if (!putMidiRoute(null, deviceKey, 1, "cc", 28 + i, 28 + i,
-                targets[i], "mute")) return false
+    /**
+     * One button replaces only the MPK pad CC banks (channel 2, CC20–35) and
+     * knobs (keyboard/control channel 1, configurable CC first 1 or 70).
+     * Pads stay physically Momentary so Note Bank A drums and Note Bank B Bass
+     * release normally. In CC mode the app toggles controls on each press.
+     */
+    @Synchronized fun applyMpkMiniMk2ControlsPreset(
+        deviceKey: String, firstKnobCc: Int = 1
+    ): Boolean {
+        if (firstKnobCc !in 0..120 || deviceKey.isBlank()) return false
+        fun matchesDevice(r: MidiRoute) =
+            r.deviceKey == deviceKey || r.deviceKey == "*"
+        val remainder = midiRoutes.filterNot { r ->
+            matchesDevice(r) && r.kind == "cc" &&
+                ((r.channel in setOf(-1, 1) && r.first <= 35 && r.last >= 20) ||
+                 (r.channel in setOf(-1, 0) &&
+                     r.first <= firstKnobCc + 7 && r.last >= firstKnobCc))
         }
-        val commands = listOf("play-stop", "record-toggle", "metronome-toggle", "next-track")
-        for (i in 0..3) {
-            if (!putMidiRoute(null, deviceKey, 1, "cc", 32 + i, 32 + i,
-                0, commands[i])) return false
-        }
+        // Slot targets are positions in the current performance track order.
+        val assignments = mutableListOf<Triple<Int, String, Int>>()
+        assignments += Triple(20, "play-stop", -1)
+        assignments += Triple(21, "record-toggle", -1)
+        assignments += Triple(22, "metronome-toggle", -1)
+        for (slot in 0..4) assignments += Triple(23 + slot, "slot-solo", slot)
+        for (slot in 0..6) assignments += Triple(28 + slot, "slot-mute", slot)
+        assignments += Triple(35, "mute-all", -1)
+        val proposed = mutableListOf<MidiRoute>()
+        var next = nextMidiRouteId
+        for ((number, action, slot) in assignments)
+            proposed += MidiRoute(next++, deviceKey, 1, "cc", number, number,
+                0, action, slot, ccMode = "press-toggle")
+        for (slot in 0..6)
+            proposed += MidiRoute(next++, deviceKey, 0, "cc",
+                firstKnobCc + slot, firstKnobCc + slot, 0, "slot-volume", slot)
+        proposed += MidiRoute(next++, deviceKey, 0, "cc",
+            firstKnobCc + 7, firstKnobCc + 7, 0, "master")
+        if (remainder.size + proposed.size > 48) return false
+        midiRoutes.clear()
+        midiRoutes.addAll(remainder)
+        midiRoutes.addAll(proposed)
+        nextMidiRouteId = next
+        changed()
         return true
     }
+
+    /** Deprecated old CC Bass shortcut: use Note Bank B instead. */
+    @Synchronized fun applyMpkMiniMk2CcBassPreset(deviceKey: String): Boolean = false
+
+    /** Deprecated Bank B mixture; all 16 CC pads now have switch functions. */
+    @Synchronized fun applyMpkMiniMk2StagePreset(deviceKey: String): Boolean =
+        applyMpkMiniMk2ControlsPreset(deviceKey)
 
     @Synchronized fun setBpm(value: Int) {
         advance(System.nanoTime())
