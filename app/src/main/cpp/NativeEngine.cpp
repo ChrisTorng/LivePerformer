@@ -157,7 +157,7 @@ public:
         lastAppliedGain_ = -1.0f;
     }
     void setGain(float gain) noexcept {
-        if (std::isfinite(gain)) gain_.store(std::clamp(gain, 0.1f, 1.5f), std::memory_order_release);
+        if (std::isfinite(gain)) gain_.store(std::clamp(gain, 0.0f, 1.5f), std::memory_order_release);
     }
     bool consumeReconnectRequest() noexcept {
         return reconnectRequested_.exchange(false, std::memory_order_acq_rel);
