@@ -1,4 +1,4 @@
-# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.8)
+# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.9)
 
 **Status: early source prototype, not yet device-verified.** Initial target: Samsung Galaxy A25 5G, USB MIDI keyboard, wired 3.5 mm headphones. v0.2.1 adds an ergonomic single-screen interface and v0.2 includes an experimental MIDI-only loop recorder; physical device performance remains unverified.
 
@@ -79,11 +79,11 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 
 - System -> MIDI testing lists connected MIDI devices and their own 50-event logs (channel, note/CC/program/pitch bend; no repeated timestamps or source names). Clock (0xF8) and Active Sensing (0xFE) are excluded to avoid drowning out test data.
 - Project -> MIDI routing stores up to 48 device/channel/kind/number-range/target/action rules under the `midiRoutes` JSON field. Note or momentary CC pads can play different tracks, optionally transposed or mapped to an eight-step major scale.
-- The MPK mini MK2 shortcut uses the supplied Editor screenshot: channel 2, Note 36-43 to existing drum track, Note 44-51 to existing Bass track. Source keyboards default to playing the selected track; extra CC mappings can be manually added.
+- The MPK mini MK2 channel-2 Note 36–43 Pad Bank A is a fixed eight-role drum layout (GM 36/38/42/46/45/50/51/49), independent of the selected SoundFont. The optional Note 44–51 Bass shortcut and existing CC Bank B stage controls remain separate. Source keyboards default to playing the selected track; extra CC mappings can be manually added.
 - Explicit CC rules may control track volume CC7, track pan CC10, or master FluidSynth gain; Program Change is diagnostic-only unless mapped to select-track.
 - MIDI output Clock is selectable under System → MIDI testing and sends Start/Stop and MIDI Clock at 24 PPQN from the existing 4-ms scheduler. MPK mini MK2 must use Editor Clock External and Send To RAM for ARP external synchronization; clock timing is best-effort, not sample-accurate.
 - Existing projects without `midiRoutes` remain supported. MIDI output ID is not persisted across reconnect. Two identical devices without distinguishable serial numbers share a mapping identity.
-- Limitations: only one armed track records at a time; simultaneous live multi-track notes do not automatically record every played track. No MIDI Learn, custom drum map, minor scale, Windows GUI or physical device verification yet.
+- Limitations: only one armed track records at a time; simultaneous live multi-track notes do not automatically record every played track. No MIDI Learn, Windows GUI or physical device verification yet. Non-GM hi-hat choking depends on the SoundFont exclusiveClass/release behavior; arbitrary samples cannot be guaranteed to choke.
 
 ## v0.4.3: Mobile MIDI mapping refinement (feature branch)
 
@@ -147,3 +147,14 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - The DocumentsProvider is a **virtual system Files location backed by App-private storage**, not a physical `/storage/emulated/0/Documents/LivePerformer` path. This avoids a second copy of large converted SF2s. It appears as `LivePerformer` among available locations in Android's native Files picker; individual OEM file managers vary in how they display external providers. Data in this root is removed when the app is uninstalled; exporting/copying documents outside it is still recommended for backups.
 - Files directly under Downloads, including the user's existing SF3/XZ, stay exactly where they are: use the direct system picker and search. The system picker may show other extensions because Android scopes it by MIME; LivePerformer verifies suffixes before parsing.
 - Provider and project import behavior have Android emulator integration tests for root listing, copying to the inbox, duplicate-safe project import, and rejecting unrelated extensions.
+
+## v0.4.9 — 固定八 Pad 鼓聲、可匯入 SoundFont Drum Map
+
+- MPK mini MKII **Pad Bank A (channel 2, Note 36–43)**: Pad 1 Bass Drum=GM36, 2 Snare=38, 3 Closed Hi-hat=42, 4 Open Hi-hat=46, 5 Low Tom=45, 6 High Tom=50, 7 Ride=51, 8 Crash=49. Only the Pad number comes from the hardware; the sound uses the current kit mapping.
+- A matching MPK Bank A uses this assignment automatically when the project has a drum track; the project-level “MPK mini MK2 固定鼓 Pad” preset creates an explicit `drum-pads` route. Historical unmodified Note 36–43 drum passthrough routes are interpreted as these roles and can be upgraded by the preset button. Custom user routes are not replaced automatically. Bank B (Note 44–51 and CC20–35) is not changed.
+- Each recorded drum hit stores its **canonical GM role note**, not the target SoundFont's arbitrary sample number. Live monitoring and loop playback apply the selected drum SoundFont map at synth output, allowing switching compatible kits while preserving the eight musical roles.
+- **GM is built in** and requires no downloaded mapping. From **System Settings → 音色庫 → 匯入 Map**, choose a `.drummap.json` file from Downloads or Android Files; it is saved in app-wide preferences for that SoundFont and all projects. **還原 GM** removes all overrides for the SoundFont.
+- A map normally applies to every drum preset in one SoundFont. If the JSON includes both `"bank":128` and `"program":0` (zero-based), it only overrides that particular SF2 preset, leaving the SoundFont-level mapping as fallback. Imported overrides are not embedded into `.lvp` projects.
+- Example downloadable mapping: [gm-standard.drummap.json](drum-maps/gm-standard.drummap.json). Replace the eight `notes` MIDI integers according to a kit's documentation; the `format` and eight semantic keys must remain unchanged. Do **not** use named octave pitches (C2/C3), as naming conventions differ.
+- Hi-hat closing sends NoteOff for the mapped open-hat note just before NoteOn for the mapped closed-hat note. Correct SF2 `exclusiveClass` is still necessary to guarantee instant choking for samples that ignore NoteOff. Merely importing a mapping file cannot synthesize missing hi-hat choking behavior in an unsuitable SoundFont.
+- No separate Android file-storage permission is needed for importing a mapping; the user explicitly selects the document through the system file picker.
