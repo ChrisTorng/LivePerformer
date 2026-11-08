@@ -62,6 +62,13 @@ class LoopController(context: Context) {
 
     private val prefs = context.applicationContext.getSharedPreferences("loop-session", Context.MODE_PRIVATE)
     private val drumMaps = DrumMapStore(context)
+    private val mpkPrefs = context.applicationContext.getSharedPreferences(
+        "mpk-control-defaults", Context.MODE_PRIVATE
+    )
+
+    @Synchronized fun defaultKnobFirstCc(deviceKey: String): Int =
+        mpkPrefs.getInt("knobFirst:$deviceKey",
+            mpkPrefs.getInt("knobFirst:*", 1)).takeIf { it in 0..120 } ?: 1
     private val tracks = mutableListOf<Track>()
     private val midiRoutes = mutableListOf<MidiRoute>()
     private var nextMidiRouteId = 1
@@ -710,13 +717,14 @@ class LoopController(context: Context) {
             return MidiRoute(-1, event.deviceKey, 1, "cc", number, number, 0,
                 action, slot, ccMode = "press-toggle")
         }
-        if (event.channel == 0 && number in 1..8) {
+        val firstKnob = defaultKnobFirstCc(event.deviceKey)
+        if (event.channel == 0 && number in firstKnob..(firstKnob + 7)) {
             val hasEditedKnobs = midiRoutes.any {
                 sameDevice(it) && it.kind == "cc" && it.channel in setOf(-1, 0) &&
                     it.action in setOf("slot-volume", "master")
             }
             if (hasEditedKnobs) return null
-            val slot = number - 1
+            val slot = number - firstKnob
             return MidiRoute(-1, event.deviceKey, 0, "cc", number, number, 0,
                 if (slot < 7) "slot-volume" else "master",
                 if (slot < 7) slot else -1)
@@ -1005,6 +1013,7 @@ class LoopController(context: Context) {
         midiRoutes.addAll(remainder)
         midiRoutes.addAll(proposed)
         nextMidiRouteId = next
+        mpkPrefs.edit().putInt("knobFirst:$deviceKey", firstKnobCc).apply()
         changed()
         return true
     }
