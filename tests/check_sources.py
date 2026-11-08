@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.4.8' in workflow and 'versionCode = 17' in gradle
+assert 'v0.4.9' in workflow and 'versionCode = 18' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -196,3 +196,16 @@ assert 'openJson.launch(arrayOf("*/*"))' in activity
 assert 'treePicker.launch(null)' not in activity
 assert (root/'app/src/androidTest/java/tw/idv/christorng/liveperformer/ManagedDocumentsProviderTest.kt').is_file()
 print('PASS: Android Files exposes managed bank/project/template folders and scoped SoundFont inbox')
+
+# v0.4.9: semantic drum pads, sound bank mappings and stable project recordings
+drum=(root/'app/src/main/java/tw/idv/christorng/liveperformer/DrumMaps.kt').read_text()
+routing=(root/'app/src/main/java/tw/idv/christorng/liveperformer/MidiRouting.kt').read_text()
+assert 'val gmNotes = listOf(36, 38, 42, 46, 45, 50, 51, 49)' in drum
+assert 'fun forPreset(' in drum and 'fun reset(' in drum
+assert 'drum-pads' in routing and 'drum-pads' in looper and 'drum-pads' in routing_ui
+assert 'drumMaps.forPreset(' in looper and 'sendToSynth(track, e.type' in looper
+assert 'importDrumMap' in activity and 'openDrumMap' in activity
+assert 'LivePerformer-v0.4.9.apk' in workflow
+assert (root/'drum-maps/gm-standard.drummap.json').exists()
+assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/DrumPadsTest.kt').exists()
+print('PASS: v0.4.9 global eight-pad drum mapping and versioned APK')
