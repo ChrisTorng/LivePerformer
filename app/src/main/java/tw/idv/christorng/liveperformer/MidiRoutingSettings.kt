@@ -83,10 +83,10 @@ fun MidiRoutingSettings(
             style = MaterialTheme.typography.bodySmall)
         OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = {
             feedback = if (looper.applyMpkMiniMk2Preset(deviceKey))
-                "已套用 Pad：Note 36–43 → 鼓，44–51 → Bass"
-            else "請先建立鼓組與 Bass 音軌"
+                "已套用 Pad Bank A：1–8 → 鼓組固定功能（GM 36/38/42/46/45/50/51/49），Bank B 保留原設定"
+            else "請先建立鼓組音軌，或檢查既有 Note 36–43 路由是否自訂"
             onMessage(feedback)
-        }) { Text("套用 MPK mini MK2 範例", maxLines = 1) }
+        }) { Text("套用 MPK mini MK2 固定鼓 Pad", maxLines = 1) }
         OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = {
             feedback = if (looper.applyMpkMiniMk2CcBassPreset(deviceKey))
                 "已設定 CC 20–27 → Bass C2 大調，可再按編輯改調性或逐鍵音高"
@@ -151,6 +151,7 @@ fun MidiRoutingSettings(
             "program" -> listOf("select-track" to "切換音軌")
             "cc" -> listOf("note" to "CC → 指定首音（半音）",
                 "scale" to "CC → 調性音階", "custom" to "CC → 逐鍵指定",
+                "drum-pads" to "8 Pad 固定鼓聲功能",
                 "volume" to "音軌音量", "pan" to "左右平衡", "master" to "總音量",
                 "mute" to "指定軌 Mute（Toggle）",
                 "solo" to "指定軌 Solo（Toggle）",
@@ -159,7 +160,8 @@ fun MidiRoutingSettings(
                 "metronome-toggle" to "節拍器切換（Momentary）",
                 "next-track" to "選取下一軌（Momentary）")
             else -> listOf("note" to "原始／半音音高",
-                "scale" to "調性音階", "custom" to "逐鍵指定")
+                "scale" to "調性音階", "custom" to "逐鍵指定",
+                "drum-pads" to "8 Pad 固定鼓聲功能")
         }
         MidiChoice(actions.firstOrNull { it.first == action }?.second ?: "選擇動作",
             actions, { selected ->
@@ -236,7 +238,7 @@ fun MidiRoutingSettings(
                 color = MaterialTheme.colorScheme.error)
         }
 
-        if (action in setOf("note", "scale", "custom")) {
+        if (action in setOf("note", "scale", "custom", "drum-pads")) {
             val start = first.toIntOrNull() ?: -1
             val end = last.toIntOrNull() ?: -1
             if (start in 0..127 && end in start..127) {
@@ -244,6 +246,7 @@ fun MidiRoutingSettings(
                 val preview = (start..end.coerceAtMost(start + 7)).mapIndexed { i, input ->
                     val pitch = when (action) {
                         "scale" -> MidiPitch.scale(base, i, scaleMode)
+                        "drum-pads" -> DrumPads.gmNotes.getOrNull(i) ?: -1
                         "custom" -> custom.getOrNull(i)?.toIntOrNull() ?: -1
                         else -> (noteBase.toIntOrNull() ?: -1).let { if (it < 0) input else it + i }
                     }
@@ -293,6 +296,7 @@ fun MidiRoutingSettings(
                 "scale" -> MidiPitch.name(route.noteBase) +
                     if (route.scaleMode == "minor") " 自然小調" else " 大調"
                 "custom" -> "逐鍵指定"
+                "drum-pads" -> "固定 8 Pad 鼓聲功能"
                 "note" -> if (route.noteBase < 0) "原音" else "首音 " + MidiPitch.name(route.noteBase)
                 else -> route.action
             }, style = MaterialTheme.typography.bodySmall)
