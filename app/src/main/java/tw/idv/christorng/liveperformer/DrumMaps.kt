@@ -77,9 +77,9 @@ class DrumMapStore(context: Context) {
     )
     private val cache = mutableMapOf<String, DrumMap>()
 
-    private fun fontKey(fontId: String) = "map:$" + "fontId"
+    private fun fontKey(fontId: String) = "map:${fontId}"
     private fun presetKey(fontId: String, bank: Int, program: Int) =
-        "map:$" + "fontId:$" + "bank:$" + "program"
+        "map:${fontId}:${bank}:${program}"
 
     private fun find(key: String): DrumMap? {
         if (cache.containsKey(key)) return cache[key]
@@ -99,7 +99,7 @@ class DrumMapStore(context: Context) {
     @Synchronized fun description(fontId: String): String {
         val default = forFont(fontId).name
         val count = prefs.all.keys.count { it.startsWith(fontKey(fontId) + ":") }
-        return if (count == 0) default else "$" + "default（另有 $" + "{count} 個預設對應）"
+        return if (count == 0) default else "${default}（另有 ${count} 個預設對應）"
     }
 
     @Synchronized fun install(fontId: String, json: String): DrumMap {
