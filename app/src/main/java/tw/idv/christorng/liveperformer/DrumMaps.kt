@@ -24,8 +24,11 @@ object DrumPads {
     fun roleForCanonical(note: Int): Int = gmNotes.indexOf(note)
 }
 
-data class DrumMap(val name: String, val notes: List<Int>) {
+data class DrumMap(val name: String, val notes: List<Int>,
+                   val bank: Int? = null, val program: Int? = null) {
     init {
+        require((bank == null && program == null) ||
+            (bank in 0..16383 && program in 0..127)) { "bank / program 必須同時指定" }
         require(notes.size == DrumPads.keys.size && notes.all { it in 0..127 }) {
             "鼓組對應須完整提供 8 個 MIDI Note（0–127）"
         }
@@ -54,13 +57,15 @@ data class DrumMap(val name: String, val notes: List<Int>) {
             }
             val name = obj.getString("name").trim()
             require(name.isNotEmpty() && name.length <= 100) { "鼓組名稱無效" }
+            val bank = if (obj.has("bank")) obj.getInt("bank") else null
+            val program = if (obj.has("program")) obj.getInt("program") else null
             val values = obj.getJSONObject("notes")
             val notes = DrumPads.keys.map { key ->
                 val value = values.get(key)
                 require(value is Int && value in 0..127) { "$key 必須是 0–127 的 MIDI Note" }
                 value
             }
-            return DrumMap(name, notes)
+            return DrumMap(name, notes, bank, program)
         }
     }
 }
@@ -72,26 +77,50 @@ class DrumMapStore(context: Context) {
     )
     private val cache = mutableMapOf<String, DrumMap>()
 
+    private fun fontKey(fontId: String) = "map:$" + "fontId"
+    private fun presetKey(fontId: String, bank: Int, program: Int) =
+        "map:$" + "fontId:$" + "bank:$" + "program"
+
+    private fun find(key: String): DrumMap? {
+        if (cache.containsKey(key)) return cache[key]
+        val json = prefs.getString(key, null) ?: return null
+        val map = runCatching { DrumMap.fromJson(json) }.getOrNull() ?: return null
+        cache[key] = map
+        return map
+    }
+
     @Synchronized fun forFont(fontId: String): DrumMap =
-        cache.getOrPut(fontId) {
-            val json = prefs.getString("map:$fontId", null) ?: return@getOrPut DrumMap.GM
-            runCatching { DrumMap.fromJson(json) }.getOrDefault(DrumMap.GM)
-        }
+        find(fontKey(fontId)) ?: DrumMap.GM
+
+    /** A SoundFont can contain several drum presets with different key layouts. */
+    @Synchronized fun forPreset(fontId: String, bank: Int, program: Int): DrumMap =
+        find(presetKey(fontId, bank, program)) ?: forFont(fontId)
+
+    @Synchronized fun description(fontId: String): String {
+        val default = forFont(fontId).name
+        val count = prefs.all.keys.count { it.startsWith(fontKey(fontId) + ":") }
+        return if (count == 0) default else "$" + "default（另有 $" + "{count} 個預設對應）"
+    }
 
     @Synchronized fun install(fontId: String, json: String): DrumMap {
         require(fontId.isNotBlank() && fontId.length <= 256)
         val parsed = DrumMap.fromJson(json)
-        require(prefs.edit().putString("map:$fontId", json).commit()) {
+        val key = if (parsed.bank != null && parsed.program != null)
+            presetKey(fontId, parsed.bank, parsed.program) else fontKey(fontId)
+        require(prefs.edit().putString(key, json).commit()) {
             "無法儲存鼓組對應"
         }
-        cache[fontId] = parsed
+        cache[key] = parsed
         return parsed
     }
 
+    /** Reset all overrides for this bank, including special per-preset maps. */
     @Synchronized fun reset(fontId: String) {
-        require(prefs.edit().remove("map:$fontId").commit()) {
-            "無法重設鼓組對應"
-        }
-        cache.remove(fontId)
+        val base = fontKey(fontId)
+        val keys = prefs.all.keys.filter { it == base || it.startsWith(base + ":") }
+        val edit = prefs.edit()
+        keys.forEach { edit.remove(it) }
+        require(edit.commit()) { "無法重設鼓組對應" }
+        keys.forEach(cache::remove)
     }
 }
