@@ -215,7 +215,7 @@ fun PerformancePanel(
                     Column(Modifier.width(210.dp).padding(12.dp)) {
                         Text("主音量 ${(volume * 100).toInt()}%")
                         Slider(value = volume, onValueChange = onVolume,
-                            valueRange = 0.1f..1.5f)
+                            valueRange = 0f..1.5f)
                     }
                 }
                 }
