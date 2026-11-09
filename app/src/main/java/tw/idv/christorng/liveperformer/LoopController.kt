@@ -66,9 +66,15 @@ class LoopController(context: Context) {
         "mpk-control-defaults", Context.MODE_PRIVATE
     )
 
-    @Synchronized fun defaultKnobFirstCc(deviceKey: String): Int =
-        mpkPrefs.getInt("knobFirst:$deviceKey",
-            mpkPrefs.getInt("knobFirst:*", 2)).takeIf { it in 0..120 } ?: 2
+    /** v0.4.10 used CC1–8. Migrate that unverified preset to MKII's real CC2–9
+     * without losing deliberate custom CC70–77; new selections use a v2 key. */
+    @Synchronized fun defaultKnobFirstCc(deviceKey: String): Int {
+        val modern = mpkPrefs.getInt("knobFirstV2:$deviceKey", -1)
+        if (modern in 0..120) return modern
+        val legacy = mpkPrefs.getInt("knobFirst:$deviceKey",
+            mpkPrefs.getInt("knobFirst:*", 2))
+        return legacy.takeUnless { it == 1 }?.takeIf { it in 0..120 } ?: 2
+    }
     private val tracks = mutableListOf<Track>()
     private val midiRoutes = mutableListOf<MidiRoute>()
     private var nextMidiRouteId = 1
@@ -1015,7 +1021,7 @@ class LoopController(context: Context) {
         midiRoutes.addAll(remainder)
         midiRoutes.addAll(proposed)
         nextMidiRouteId = next
-        mpkPrefs.edit().putInt("knobFirst:$deviceKey", firstKnobCc).apply()
+        mpkPrefs.edit().putInt("knobFirstV2:$deviceKey", firstKnobCc).apply()
         changed()
         return true
     }
