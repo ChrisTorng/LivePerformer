@@ -64,31 +64,31 @@ jobs:
           grep -Fxq 'assets/GeneralUser-GS.sf2' apk-entries.txt || { echo "::error::Missing assets/GeneralUser-GS.sf2"; exit 1; }
           $ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner verify --verbose "$APK"
       - name: Name APK with explicit version for PR testing
-        run: cp app/build/outputs/apk/release/app-release.apk LivePerformer-v0.4.10.apk
+        run: cp app/build/outputs/apk/release/app-release.apk LivePerformer-v0.4.11.apk
       - name: Publish optimized APK (development certificate)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/release/app-release.apk LivePerformer-v0.4.10.apk
-          zip -9 LivePerformer-v0.4.10.zip LivePerformer-v0.4.10.apk
-          sha256sum LivePerformer-v0.4.10.apk > LivePerformer-v0.4.10.sha256
-          TAG=v0.4.10-dev
+          cp app/build/outputs/apk/release/app-release.apk LivePerformer-v0.4.11.apk
+          zip -9 LivePerformer-v0.4.11.zip LivePerformer-v0.4.11.apk
+          sha256sum LivePerformer-v0.4.11.apk > LivePerformer-v0.4.11.sha256
+          TAG=v0.4.11-dev
           NOTES="Non-debuggable optimized Android release build (R8 + native -O3), signed with the publicly shared development-only certificate so previous test installations can update without clearing local data. NOT a production signing key. SF3 import converts Vorbis samples offline to SF2 using Android MediaCodec; decoded SF2 needs substantially more storage. Android device-level validation is still required."
           if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" LivePerformer-v0.4.10.apk LivePerformer-v0.4.10.zip LivePerformer-v0.4.10.sha256 --clobber
+            gh release upload "$TAG" LivePerformer-v0.4.11.apk LivePerformer-v0.4.11.zip LivePerformer-v0.4.11.sha256 --clobber
           else
-            gh release create "$TAG" LivePerformer-v0.4.10.apk LivePerformer-v0.4.10.zip LivePerformer-v0.4.10.sha256 \
+            gh release create "$TAG" LivePerformer-v0.4.11.apk LivePerformer-v0.4.11.zip LivePerformer-v0.4.11.sha256 \
               --target "$GITHUB_SHA" --prerelease \
-              --title "LivePerformer v0.4.10 (optimized test APK)" \
+              --title "LivePerformer v0.4.11 (optimized test APK)" \
               --notes "$NOTES"
           fi
       - name: Upload optimized APK artifact
-        if: always() && hashFiles('LivePerformer-v0.4.10.apk') != ''
+        if: always() && hashFiles('LivePerformer-v0.4.11.apk') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: LivePerformer-v0.4.10-optimized-apk
-          path: LivePerformer-v0.4.10.apk
+          name: LivePerformer-v0.4.11-optimized-apk
+          path: LivePerformer-v0.4.11.apk
           if-no-files-found: error
           retention-days: 30
 
