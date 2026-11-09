@@ -19,10 +19,14 @@ data class LoopTrackView(
     val program: Int,
     val muted: Boolean,
     val solo: Boolean,
+    val volume: Int,
     val notes: Int,
     val fontId: String,
     val category: String,
-    val noteRects: List<LoopNoteView>
+    val noteRects: List<LoopNoteView>,
+    val activityLevel: Float,
+    val keyboardBase: Int,
+    val pitchRange: IntRange?
 )
 data class LoopView(
     val bpm: Int,
@@ -40,7 +44,10 @@ data class LoopView(
     val progress: Float,
     val keyboardNotes: Set<Int>,
     val tracks: List<LoopTrackView>,
-    val midiRoutes: List<MidiRoute>
+    val midiRoutes: List<MidiRoute>,
+    val countInEnabled: Boolean,
+    val countInBars: Int,
+    val countInBeatsLeft: Int
 )
 
 /**
@@ -57,8 +64,13 @@ class LoopController(context: Context) {
         var fontId: String = "gm",
         var category: String = "",
         var solo: Boolean = false,
+        var volume: Int = 100,
+        var keyboardBase: Int = -1,
         val events: MutableList<Event> = mutableListOf()
-    )
+    ) {
+        val heldVelocities = mutableMapOf<Int, Int>()
+        var activityLevel = 0f // MIDI activity proxy, not measured PCM amplitude.
+    }
 
     private val prefs = context.applicationContext.getSharedPreferences("loop-session", Context.MODE_PRIVATE)
     private val drumMaps = DrumMapStore(context)
@@ -97,6 +109,11 @@ class LoopController(context: Context) {
     private var quantizeDivision = 16
     private var hasUnsavedChanges = true
     private var metronome = true
+    private var countInEnabled = true
+    private var countInBars = 1
+    private var countInActive = false
+    private var countInProgress = 0.0
+    private var lastCountInScheduled = -0.01
     private var selectedId = 1
     private var nextId = 3
     private var playing = false
@@ -133,6 +150,9 @@ class LoopController(context: Context) {
         beatUnit = 4
         quantizeDivision = 16
         metronome = true
+        countInEnabled = true
+        countInBars = 1
+        countInActive = false
         nextId = 6
         selectedId = 5
         val drums = Track(1, 9, "鼓組", 128, 0)
@@ -194,6 +214,9 @@ class LoopController(context: Context) {
         beatUnit = 4
         quantizeDivision = 16
         metronome = true
+        countInEnabled = true
+        countInBars = 1
+        countInActive = false
         absoluteTick = 0.0
         lastScheduled = -0.01
         clockNs = System.nanoTime()
@@ -222,6 +245,7 @@ class LoopController(context: Context) {
         preRollEvents.clear()
         takeHasNotes = false
         keysDown.clear()
+        countInActive = false
         NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
         absoluteTick = 0.0
         lastScheduled = -0.01
@@ -300,7 +324,8 @@ class LoopController(context: Context) {
                 obj.optBoolean("muted"), obj.optString("fontId", "gm").ifBlank { "gm" },
                 obj.optString("category", "").ifBlank {
                     if (channel == 9) "鼓組" else GmCategories.names[GmCategories.family(obj.optInt("program"))]
-                }, obj.optBoolean("solo", false))
+                }, obj.optBoolean("solo", false), obj.optInt("volume", 100).coerceIn(0, 127),
+                obj.optInt("keyboardBase", -1).coerceIn(-1, 127))
             if (!settingsOnly) {
                 val notes = obj.optJSONArray("events") ?: JSONArray()
                 require(notes.length() <= 100000) { "MIDI 音符數量過多" }
@@ -331,6 +356,7 @@ class LoopController(context: Context) {
             NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
             armedTrack = null
             recordingTrack = null
+            countInActive = false
             preRollEvents.clear()
             heldRecordingNotes.clear()
             takeHasNotes = false
@@ -346,6 +372,8 @@ class LoopController(context: Context) {
             .takeIf { it in LoopMath.supportedQuantization } ?: 16
         bpm = root.optInt("bpm", 120).coerceIn(40, 240)
         metronome = root.optBoolean("metronome", true)
+        countInEnabled = root.optBoolean("countInEnabled", true)
+        countInBars = root.optInt("countInBars", 1).coerceIn(1, 2)
         selectedId = root.optInt("selectedId", newTracks.firstOrNull()?.id ?: 0)
         nextId = maxOf(root.optInt("nextId", 1), (newTracks.maxOfOrNull { it.id } ?: 0) + 1)
         tracks.clear()
@@ -383,6 +411,7 @@ class LoopController(context: Context) {
             .put("beatsPerBar", beatsPerBar).put("beatUnit", beatUnit)
             .put("quantizeDivision", quantizeDivision)
             .put("metronome", metronome)
+            .put("countInEnabled", countInEnabled).put("countInBars", countInBars)
             .put("selectedId", selectedId).put("nextId", nextId)
         if (fileFormat) {
             root.put("format", "liveperformer.v1")
@@ -403,6 +432,7 @@ class LoopController(context: Context) {
             val obj = JSONObject().put("id", t.id).put("channel", t.channel)
                 .put("name", t.name).put("bank", t.bank).put("program", t.program)
                 .put("muted", t.muted).put("solo", t.solo)
+                .put("volume", t.volume).put("keyboardBase", t.keyboardBase)
                 .put("fontId", t.fontId).put("category", t.category)
             if (!settingsOnly) {
                 val events = JSONArray()
@@ -452,17 +482,23 @@ class LoopController(context: Context) {
     @Synchronized private fun snapshot(): LoopView {
         val length = LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
         val at = ((absoluteTick.toLong() % length + length) % length).toInt()
+        val beatSize = LoopMath.beatTicks(beatUnit)
+        val countLeft = if (countInActive) kotlin.math.ceil(
+            (countInBars * LoopMath.barTicks(beatsPerBar, beatUnit) - countInProgress) / beatSize
+        ).toInt().coerceAtLeast(1) else 0
         return LoopView(bpm, bars, beatsPerBar, beatUnit, quantizeDivision, metronome, playing, armedTrack != null,
             recordingTrack != null, selectedId, at / LoopMath.barTicks(beatsPerBar, beatUnit) + 1,
             (at / LoopMath.beatTicks(beatUnit)) % beatsPerBar + 1, at.toFloat() / length,
             keysDown[tracks.firstOrNull { it.id == selectedId }?.channel]?.toSet() ?: emptySet(),
             tracks.map {
+                val recorded = it.events.filter { event -> event.type == NativeEngine.NOTE_ON && event.velocity > 0 }
                 LoopTrackView(it.id, it.name, it.channel, it.bank, it.program, it.muted, it.solo,
-                    it.events.count { event -> event.type == NativeEngine.NOTE_ON },
+                    it.volume, it.events.count { event -> event.type == NativeEngine.NOTE_ON },
                     it.fontId, it.category.ifBlank {
                         if (it.channel == 9) "鼓組" else GmCategories.names[GmCategories.family(it.program)]
-                    }, pianoNotes(it, length))
-            }, midiRoutes.toList())
+                    }, pianoNotes(it, length), it.activityLevel, it.keyboardBase,
+                    if (recorded.isEmpty()) null else recorded.minOf { e -> e.note }..recorded.maxOf { e -> e.note })
+            }, midiRoutes.toList(), countInEnabled, countInBars, countLeft)
     }
 
     private fun publish() {
@@ -479,7 +515,18 @@ class LoopController(context: Context) {
     private fun advance(now: Long) {
         if (playing) {
             val delta = (now - clockNs).coerceAtLeast(0)
-            absoluteTick += delta.toDouble() * bpm * LoopMath.PPQ / 60_000_000_000.0
+            val increment = delta.toDouble() * bpm * LoopMath.PPQ / 60_000_000_000.0
+            if (countInActive) {
+                countInProgress += increment
+                val duration = countInBars * LoopMath.barTicks(beatsPerBar, beatUnit)
+                if (countInProgress >= duration) {
+                    countInActive = false
+                    absoluteTick = countInProgress - duration
+                    lastScheduled = -0.01
+                    lastClockIndex = -1L
+                    clockSender?.invoke(0xfa)
+                }
+            } else absoluteTick += increment
         }
         clockNs = now
     }
@@ -506,6 +553,7 @@ class LoopController(context: Context) {
         takeHasNotes = false
         recordingTrack = null
         armedTrack = null
+        countInActive = false
     }
 
     private fun capture(track: Track, type: Int, note: Int, velocity: Int, position: Double) {
@@ -536,12 +584,33 @@ class LoopController(context: Context) {
         hasUnsavedChanges = true
     }
 
+    private fun noteActivity(track: Track, type: Int, note: Int, velocity: Int) {
+        if (type == NativeEngine.NOTE_ON && velocity > 0) {
+            track.heldVelocities[note] = velocity
+            track.activityLevel = maxOf(track.activityLevel, velocity / 127f)
+        } else if (type == NativeEngine.NOTE_OFF || type == NativeEngine.NOTE_ON && velocity == 0) {
+            track.heldVelocities.remove(note)
+        }
+    }
+
+    private fun resetActivity() {
+        tracks.forEach { t -> t.heldVelocities.clear(); t.activityLevel = 0f }
+    }
+
+    private fun decayActivity() {
+        tracks.forEach { t ->
+            val held = (t.heldVelocities.values.maxOrNull() ?: 0) / 127f
+            t.activityLevel = maxOf(held, t.activityLevel * 0.88f)
+        }
+    }
+
     private fun displayKey(channel: Int, type: Int, note: Int) {
         if (type == NativeEngine.NOTE_ON) keysDown.getOrPut(channel) { mutableSetOf() }.add(note)
         if (type == NativeEngine.NOTE_OFF) keysDown[channel]?.remove(note)
     }
 
     private fun updateRecording() {
+        if (countInActive) return
         if (armedTrack != null && absoluteTick >= armedAt) {
             recordingTrack = armedTrack
             recordStart = armedAt
@@ -563,6 +632,14 @@ class LoopController(context: Context) {
         val now = System.nanoTime()
         advance(now)
         updateRecording()
+        if (countInActive) {
+            // Count-in clicks continue even when the ordinary metronome is switched off.
+            emitClicks(lastCountInScheduled, countInProgress, true)
+            lastCountInScheduled = countInProgress
+            if (now - lastPublishNs > 90_000_000L) { decayActivity(); publish() }
+            if (dirty && now - lastSaveNs > 2_000_000_000L) save()
+            return
+        }
         if (playing) {
             // MIDI Clock: 24 pulses per quarter note. This is scheduler-timed (~4 ms),
             // not hardware timestamped, and is not suitable for sample-accurate sync.
@@ -576,11 +653,15 @@ class LoopController(context: Context) {
             } else lastClockIndex = currentClock
             val length = LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
             val anySolo = tracks.any { it.solo }
-            for (track in tracks) if (!track.muted && (!anySolo || track.solo) && !(recordingTrack == track.id && takeHasNotes)) for (e in track.events) {
+            for (track in tracks) for (e in track.events) {
                 val occurrence = LoopMath.nextOccurrence(lastScheduled, e.tick, length)
                 if (occurrence <= absoluteTick && occurrence > absoluteTick - length) {
-                    sendToSynth(track, e.type, e.note, e.velocity)
-                    displayKey(track.channel, e.type, e.note)
+                    noteActivity(track, e.type, e.note, e.velocity)
+                    if (!track.muted && (!anySolo || track.solo) &&
+                        !(recordingTrack == track.id && takeHasNotes)) {
+                        sendToSynth(track, e.type, e.note, e.velocity)
+                        displayKey(track.channel, e.type, e.note)
+                    }
                 }
             }
             if (metronome) {
@@ -590,14 +671,26 @@ class LoopController(context: Context) {
                     val number = (start / beat).toLong()
                     NativeEngine.noteOn(if (number % beatsPerBar == 0L) 76 else 77, 82, 9)
                 }
-                val clickOff = (floor((lastScheduled - 96) / beat) + 1) * beat + 96
-                if (clickOff <= absoluteTick)
-                    NativeEngine.noteOff(if ((clickOff / beat).toLong() % beatsPerBar == 0L) 76 else 77, 9)
             }
+            if (metronome) emitClicks(lastScheduled, absoluteTick, false)
             lastScheduled = absoluteTick
         }
-        if (now - lastPublishNs > 90_000_000L) publish()
+        if (now - lastPublishNs > 90_000_000L) { decayActivity(); publish() }
         if (dirty && now - lastSaveNs > 2_000_000_000L) save()
+    }
+
+    /** Shared click scheduler; count-in uses the same accent and beat unit as playback. */
+    private fun emitClicks(from: Double, to: Double, force: Boolean) {
+        if (!metronome && !force) return
+        val beat = LoopMath.beatTicks(beatUnit)
+        val firstBeat = (floor(from / beat) + 1) * beat
+        if (firstBeat <= to) {
+            val index = (firstBeat / beat).toLong()
+            NativeEngine.noteOn(if (index % beatsPerBar == 0L) 76 else 77, 82, 9)
+        }
+        val off = (floor((from - 96) / beat) + 1) * beat + 96
+        if (off <= to) NativeEngine.noteOff(
+            if ((off / beat).toLong() % beatsPerBar == 0L) 76 else 77, 9)
     }
 
     /** Transport has Play/Stop semantics, never resume-from-middle. */
@@ -607,8 +700,10 @@ class LoopController(context: Context) {
         if (playing) {
             if (recordingTrack != null || armedTrack != null) stopRecord(absoluteTick)
             playing = false
+            countInActive = false
             NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
             keysDown.clear()
+            resetActivity()
         } else {
             playing = true
             clockSender?.invoke(0xfa)
@@ -624,6 +719,7 @@ class LoopController(context: Context) {
     @Synchronized fun playPause() = playStop()
 
     @Synchronized fun recordPause() {
+        if (armedTrack == null && recordingTrack == null && tracks.none { it.id == selectedId }) return
         advance(System.nanoTime())
         if (recordingTrack != null || armedTrack != null) {
             stopRecord(absoluteTick)
@@ -637,7 +733,10 @@ class LoopController(context: Context) {
             lastScheduled = -0.01
             playing = true
             lastClockIndex = -1L
-            clockSender?.invoke(0xfa)
+            countInActive = countInEnabled
+            countInProgress = 0.0
+            lastCountInScheduled = -0.01
+            if (!countInActive) clockSender?.invoke(0xfa)
             clockNs = System.nanoTime()
             armedAt = 0.0
         } else armedAt = LoopMath.nextBoundary(absoluteTick,
@@ -653,6 +752,8 @@ class LoopController(context: Context) {
         val t = tracks.firstOrNull { it.id == id } ?: return
         if (recordingTrack == t.id || armedTrack == t.id) stopRecord(absoluteTick)
         t.events.clear()
+        t.heldVelocities.clear()
+        t.activityLevel = 0f
         NativeEngine.midi(NativeEngine.CONTROLLER, t.channel, 123, 0)
         changed()
     }
@@ -686,13 +787,14 @@ class LoopController(context: Context) {
             val velocity = b.coerceIn(0, 127)
             if (recordingTrack == track.id) {
                 capture(track, type, note, velocity, absoluteTick)
-            } else if (armedTrack == track.id &&
+            } else if (!countInActive && armedTrack == track.id &&
                 absoluteTick >= armedAt - LoopMath.preRollTicks(quantizeDivision) &&
                 absoluteTick < armedAt) {
                 preRollEvents += Captured(absoluteTick, type, note, velocity)
             }
         }
         displayKey(track.channel, type, a)
+        noteActivity(track, type, a, b)
         if (!track.muted && (tracks.none { it.solo } || track.solo))
             sendToSynth(track, type, a, b)
         if (type == NativeEngine.NOTE_ON || type == NativeEngine.NOTE_OFF) publish()
@@ -765,8 +867,9 @@ class LoopController(context: Context) {
                         val target = if (route.action == "slot-volume")
                             tracks.getOrNull(route.noteBase) else track
                         if (target != null) {
-                            NativeEngine.midi(NativeEngine.CONTROLLER, target.channel,
-                                if (route.action == "pan") 10 else 7, event.data2)
+                            if (route.action == "pan") NativeEngine.midi(
+                                NativeEngine.CONTROLLER, target.channel, 10, event.data2)
+                            else setTrackVolume(target.id, event.data2)
                         }
                     }
                     "master" -> masterVolumeFromMidi?.invoke(
@@ -1072,6 +1175,7 @@ class LoopController(context: Context) {
         require((numerator to denominator) in setOf(2 to 4, 3 to 4, 4 to 4, 6 to 8))
         if (newBars == bars && beatsPerBar == numerator && beatUnit == denominator) return
         if (recordingTrack != null || armedTrack != null) stopRecord(absoluteTick)
+        countInActive = false
         bars = newBars.coerceIn(1, 8)
         beatsPerBar = numerator
         beatUnit = denominator
@@ -1087,6 +1191,27 @@ class LoopController(context: Context) {
         setStructure(bars, numerator, denominator)
     @Synchronized fun setMetronome(value: Boolean) {
         metronome = value
+        changed()
+    }
+    @Synchronized fun setCountInEnabled(value: Boolean) {
+        countInEnabled = value
+        changed()
+    }
+    @Synchronized fun setCountInBars(value: Int) {
+        countInBars = value.coerceIn(1, 2)
+        changed()
+    }
+    @Synchronized fun setTrackVolume(id: Int, value: Int) {
+        val t = tracks.firstOrNull { it.id == id } ?: return
+        val next = value.coerceIn(0, 127)
+        if (t.volume == next) return
+        t.volume = next
+        NativeEngine.midi(NativeEngine.CONTROLLER, t.channel, 7, next)
+        changed()
+    }
+    @Synchronized fun setKeyboardBase(id: Int, value: Int) {
+        val t = tracks.firstOrNull { it.id == id } ?: return
+        t.keyboardBase = value.coerceIn(0, 127)
         changed()
     }
     @Synchronized fun selectTrack(id: Int) {
@@ -1267,6 +1392,7 @@ class LoopController(context: Context) {
                 t.channel, fontIndexes[t.fontId] ?: 0,
                 t.bank, t.program
             )
+            NativeEngine.midi(NativeEngine.CONTROLLER, t.channel, 7, t.volume)
         }
     }
 
