@@ -50,6 +50,19 @@ class MpkControlsAndroidTest {
             assertEquals(24, controller.state.value.midiRoutes.count {
                 it.kind == "cc" && it.deviceKey == key
             })
+            // Regression: previous PR's CC1–8 knobs must not linger and hijack
+            // joystick Y-up CC1 when switching to the real hardware CC2–9.
+            assertTrue(controller.applyMpkMiniMk2ControlsPreset(key, 1))
+            assertTrue(controller.applyMpkMiniMk2ControlsPreset(key, 2))
+            val current = controller.state.value.midiRoutes
+            assertEquals(24, current.count { it.kind == "cc" && it.deviceKey == key })
+            assertFalse(current.any {
+                it.kind == "cc" && it.channel == 0 && it.first == 1 && it.last == 1
+            })
+            assertEquals("slot-volume",
+                current.single { it.kind == "cc" && it.channel == 0 && it.first == 2 }.action)
+            assertEquals("master",
+                current.single { it.kind == "cc" && it.channel == 0 && it.first == 9 }.action)
         } finally {
             controller.newProject(false)
             controller.close()
