@@ -205,7 +205,7 @@ assert 'fun forPreset(' in drum and 'fun reset(' in drum
 assert 'drum-pads' in routing and 'drum-pads' in looper and 'drum-pads' in routing_ui
 assert 'drumMaps.forPreset(' in looper and 'sendToSynth(track, e.type' in looper
 assert 'importDrumMap' in activity and 'openDrumMap' in activity
-assert 'LivePerformer-v0.4.11.apk' in workflow
+assert 'LivePerformer-v0.4.12.apk' in workflow
 assert (root/'drum-maps/gm-standard.drummap.json').exists()
 assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/DrumPadsTest.kt').exists()
 print('PASS: v0.4.9 global eight-pad drum mapping and versioned APK')
