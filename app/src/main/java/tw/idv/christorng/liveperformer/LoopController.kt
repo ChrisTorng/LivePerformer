@@ -664,14 +664,6 @@ class LoopController(context: Context) {
                     }
                 }
             }
-            if (metronome) {
-                val beat = LoopMath.beatTicks(beatUnit)
-                val start = (floor(lastScheduled / beat) + 1) * beat
-                if (start <= absoluteTick) {
-                    val number = (start / beat).toLong()
-                    NativeEngine.noteOn(if (number % beatsPerBar == 0L) 76 else 77, 82, 9)
-                }
-            }
             if (metronome) emitClicks(lastScheduled, absoluteTick, false)
             lastScheduled = absoluteTick
         }
