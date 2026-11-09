@@ -68,7 +68,7 @@ class LoopController(context: Context) {
 
     @Synchronized fun defaultKnobFirstCc(deviceKey: String): Int =
         mpkPrefs.getInt("knobFirst:$deviceKey",
-            mpkPrefs.getInt("knobFirst:*", 1)).takeIf { it in 0..120 } ?: 1
+            mpkPrefs.getInt("knobFirst:*", 2)).takeIf { it in 0..120 } ?: 2
     private val tracks = mutableListOf<Track>()
     private val midiRoutes = mutableListOf<MidiRoute>()
     private var nextMidiRouteId = 1
@@ -715,7 +715,7 @@ class LoopController(context: Context) {
                 else -> "mute-all" to -1
             }
             return MidiRoute(-1, event.deviceKey, 1, "cc", number, number, 0,
-                action, slot, ccMode = "press-toggle")
+                action, slot, ccMode = if (number <= 27) "press-toggle" else "absolute")
         }
         val firstKnob = defaultKnobFirstCc(event.deviceKey)
         if (event.channel == 0 && number in firstKnob..(firstKnob + 7)) {
@@ -973,13 +973,14 @@ class LoopController(context: Context) {
     }
 
     /**
-     * One button replaces only the MPK pad CC banks (channel 2, CC20–35) and
-     * knobs (keyboard/control channel 1, configurable CC first 1 or 70).
-     * Pads stay physically Momentary so Note Bank A drums and Note Bank B Bass
-     * release normally. In CC mode the app toggles controls on each press.
+     * One button replaces MPK pad CC banks (channel 2, CC20–35) and
+     * knobs (keyboard/control channel 1, default CC 2–9).
+     * Hardware CC Bank A is Momentary, interpreted as software toggle on
+     * each press; hardware CC Bank B is Toggle (127=on, 0=off).
+     * The user's real MPK mini MKII confirms Note A/B remains playable.
      */
     @Synchronized fun applyMpkMiniMk2ControlsPreset(
-        deviceKey: String, firstKnobCc: Int = 1
+        deviceKey: String, firstKnobCc: Int = 2
     ): Boolean {
         if (firstKnobCc !in 0..120 || deviceKey.isBlank()) return false
         fun matchesDevice(r: MidiRoute) =
@@ -1002,7 +1003,7 @@ class LoopController(context: Context) {
         var next = nextMidiRouteId
         for ((number, action, slot) in assignments)
             proposed += MidiRoute(next++, deviceKey, 1, "cc", number, number,
-                0, action, slot, ccMode = "press-toggle")
+                0, action, slot, ccMode = if (number <= 27) "press-toggle" else "absolute")
         for (slot in 0..6)
             proposed += MidiRoute(next++, deviceKey, 0, "cc",
                 firstKnobCc + slot, firstKnobCc + slot, 0, "slot-volume", slot)
