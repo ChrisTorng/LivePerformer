@@ -111,6 +111,30 @@ private fun TrackToggle(label: String, selected: Boolean, color: Color, onClick:
     }
 }
 
+/** Two visual channels: constant slider fill is the configured gain; the dot is activity/peak. */
+@Composable
+private fun VerticalLevelMeter(
+    setting: Float, signal: Float, muted: Boolean, modifier: Modifier = Modifier
+) {
+    val base = if (muted) Color(0xFF737981) else Color(0xFF2ABF86)
+    val dot = if (muted) Color(0xFFB1B5BA) else
+        if (signal >= .98f) Color(0xFFFF5C58) else Color(0xFFF7D764)
+    Canvas(modifier.width(10.dp).padding(vertical = 4.dp)) {
+        val w = size.width
+        val h = size.height
+        drawRoundRect(Color(0xFF24303A), cornerRadius =
+            androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()))
+        val level = setting.coerceIn(0f, 1f)
+        drawRoundRect(base.copy(alpha = if (muted) .48f else .7f),
+            topLeft = Offset(0f, h * (1f - level)),
+            size = Size(w, h * level),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()))
+        val y = h * (1f - signal.coerceIn(0f, 1f))
+        if (signal > .005f) drawCircle(dot, radius = w * .48f,
+            center = Offset(w / 2f, y.coerceIn(2f, h - 2f)))
+    }
+}
+
 @Composable
 fun PerformancePanel(
     state: LoopView,
@@ -122,6 +146,8 @@ fun PerformancePanel(
     onBaseNote: (Int) -> Unit,
     velocity: Int,
     volume: Float,
+    masterPeak: Float,
+    lastMidi: String,
     onVolume: (Float) -> Unit,
     onProjectSettings: () -> Unit,
     onMidiSettings: () -> Unit,
@@ -144,6 +170,18 @@ fun PerformancePanel(
         KeyboardMode.PLAY -> if (landscape) 91.dp else 148.dp
     }
     val anySolo = state.tracks.any { it.solo }
+    val selectedTrack = state.tracks.firstOrNull { it.id == state.selectedId }
+    val visibleSemitones = if (landscape) 36 else 24
+    val recordedRange = selectedTrack?.pitchRange
+    val monitorLower = listOfNotNull(recordedRange?.first,
+        state.keyboardNotes.minOrNull()).minOrNull()
+    val monitorUpper = listOfNotNull(recordedRange?.last,
+        state.keyboardNotes.maxOrNull()).maxOrNull()
+    val firstKey = if (keyboardMode == KeyboardMode.MONITOR && monitorLower != null)
+        (monitorLower - 1).coerceAtLeast(0) else baseNote.coerceIn(0, 127)
+    val lastKey = if (keyboardMode == KeyboardMode.MONITOR && monitorUpper != null)
+        (monitorUpper + 1).coerceIn(firstKey, 127)
+        else (firstKey + visibleSemitones).coerceAtMost(127)
     Column(Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 2.dp)) {
         // Project/system configuration are deliberately separate from stage controls.
         Row(Modifier.fillMaxWidth().height(39.dp), verticalAlignment = Alignment.CenterVertically,
@@ -158,25 +196,31 @@ fun PerformancePanel(
 
         Row(Modifier.fillMaxWidth().height(58.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            horizontalArrangement = Arrangement.spacedBy(if (landscape) 9.dp else 3.dp)) {
             TransportButton(if (state.playing) "■" else "▶",
                 if (state.playing) "停止" else "播放") { looper.playStop() }
             TransportButton(if (state.recording || state.armed) "■" else "●", "錄製",
                 recording = true) { looper.recordPause() }
             if (state.recording || state.armed)
-                Text(if (state.armed) "待錄" else "REC", color = Color(0xFFF87171), fontSize = 11.sp)
+                Text(if (state.countInBeatsLeft > 0) "預備 ${state.countInBeatsLeft} 拍"
+                    else if (state.armed) "待錄" else "REC",
+                    color = Color(0xFFF87171), fontSize = 11.sp)
             MetronomeToggle(state.metronome) { looper.setMetronome(!state.metronome) }
             Text("${state.bpm} BPM", fontSize = 12.sp, maxLines = 1)
             Spacer(Modifier.weight(1f))
-            Box {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box {
                 SmallAction("音量", { showVolume = true })
                 DropdownMenu(expanded = showVolume, onDismissRequest = { showVolume = false }) {
                     Column(Modifier.width(210.dp).padding(12.dp)) {
-                        Text("音量")
+                        Text("主音量 ${(volume * 100).toInt()}%")
                         Slider(value = volume, onValueChange = onVolume,
                             valueRange = 0.1f..1.5f)
                     }
                 }
+                }
+                VerticalLevelMeter(volume / 1.5f, masterPeak,
+                    false, Modifier.height(43.dp))
             }
         }
 
@@ -189,6 +233,7 @@ fun PerformancePanel(
                     var dragPixels by remember(track.id) { mutableFloatStateOf(0f) }
                     var isDragging by remember(track.id) { mutableStateOf(false) }
                     var showTrackMenu by remember(track.id) { mutableStateOf(false) }
+                    var showTrackVolume by remember(track.id) { mutableStateOf(false) }
                     val floatingY by animateFloatAsState(
                         targetValue = if (isDragging) dragPixels else 0f,
                         animationSpec = tween(110), label = "track-float"
@@ -277,6 +322,25 @@ fun PerformancePanel(
                                 looper.toggleSolo(track.id)
                             }
                             Spacer(Modifier.width(3.dp))
+                            Box {
+                                Box(Modifier.width(14.dp).height(itemHeight)
+                                    .clickable { showTrackVolume = true },
+                                    contentAlignment = Alignment.Center) {
+                                    VerticalLevelMeter(track.volume / 127f,
+                                        track.activityLevel * track.volume / 127f,
+                                        !audible, Modifier.height(itemHeight - 5.dp))
+                                }
+                                DropdownMenu(expanded = showTrackVolume,
+                                    onDismissRequest = { showTrackVolume = false }) {
+                                    Column(Modifier.width(204.dp).padding(12.dp)) {
+                                        Text("${track.name} 音量：${track.volume}")
+                                        Slider(track.volume.toFloat(),
+                                            { looper.setTrackVolume(track.id, it.toInt()) },
+                                            valueRange = 0f..127f)
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.width(2.dp))
                         }
                         PianoRoll(track, state.bars, state.beatsPerBar, audible,
                             Modifier.weight(1f).fillMaxHeight()
@@ -316,18 +380,21 @@ fun PerformancePanel(
                     KeyboardMode.MONITOR -> "▥ 監看"
                     KeyboardMode.HIDDEN -> "▧ 隱藏"
                 }, onKeyboardMode)
-            Spacer(Modifier.weight(1f))
-            if (keyboardMode != KeyboardMode.HIDDEN) {
+            Text(lastMidi, modifier = Modifier.weight(1f).padding(horizontal = 5.dp),
+                fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (keyboardMode == KeyboardMode.MONITOR) {
+                Text("${MidiPitch.name(firstKey)}–${MidiPitch.name(lastKey)}", fontSize = 11.sp)
+            } else if (keyboardMode == KeyboardMode.PLAY) {
                 SmallAction("−", { onBaseNote((baseNote - 12).coerceAtLeast(0)) })
-                Text("C${baseNote / 12 - 1}", fontSize = 12.sp)
-                SmallAction("+", { onBaseNote((baseNote + 12).coerceAtMost(96)) })
+                Text("${MidiPitch.name(firstKey)}–${MidiPitch.name(lastKey)}", fontSize = 10.sp)
+                SmallAction("+", { onBaseNote((baseNote + 12).coerceAtMost(127 - visibleSemitones)) })
             }
         }
         if (keyboardMode != KeyboardMode.HIDDEN) {
             AndroidView(
                 factory = { keyboard },
                 update = {
-                    it.baseNote = baseNote
+                    it.configureRange(firstKey, lastKey)
                     it.velocity = velocity
                     it.readOnly = keyboardMode == KeyboardMode.MONITOR
                     it.showExternalNotes = state.keyboardNotes
