@@ -555,13 +555,13 @@ private fun PerformerScreen() {
             reconnectAudio()
         }
     }
-    val selectedPitchRange = loopState.tracks.firstOrNull {
-        it.id == loopState.selectedId
-    }?.pitchRange
-    // Apply newly recorded pitch bounds after the take finishes, not mid-touch.
-    LaunchedEffect(loopState.selectedId,
+    val selectedTrack = loopState.tracks.firstOrNull { it.id == loopState.selectedId }
+    val selectedPitchRange = selectedTrack?.pitchRange
+    // Re-evaluate on instrument changes and after a take, but never shift keys mid-recording.
+    LaunchedEffect(loopState.selectedId, selectedTrack?.keyboardBase,
+        selectedTrack?.name, selectedTrack?.category,
         if (!loopState.recording && !loopState.armed) selectedPitchRange else null) {
-        val track = loopState.tracks.firstOrNull { it.id == loopState.selectedId }
+        val track = selectedTrack
         if (track != null) {
             val bassOrDrums = track.channel == 9 ||
                 track.name.contains("Bass", ignoreCase = true) ||
@@ -572,7 +572,7 @@ private fun PerformerScreen() {
             baseNote = suggested.coerceIn(0, 103)
         }
     }
-    val selectedTrack = loopState.tracks.firstOrNull { it.id == loopState.selectedId }
+
     val selectedFont = fonts.firstOrNull { it.id == selectedTrack?.fontId }
     val selectedPreset = selectedTrack?.let { track ->
         presets.firstOrNull { it.bank == track.bank && it.program == track.program }
