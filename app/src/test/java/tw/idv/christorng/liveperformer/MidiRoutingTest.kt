@@ -66,4 +66,27 @@ class MidiRoutingTest {
         assertFalse(custom.matches(message(0xb0, 20, 127)))
         assertEquals("C2", MidiPitch.name(36))
     }
+    @Test fun momentaryHardwarePadControlsSoftwareToggleEveryPress() {
+        val r = MidiRoute(20, "mpk", 1, "cc", 20, 20, 0,
+            "play-stop", ccMode = "press-toggle")
+        val down = message(0xb1, 20, 127)
+        val up = message(0xb1, 20, 0)
+        assertEquals(true, r.targetState(down, false))
+        assertEquals(null, r.targetState(up, true))
+        assertEquals(false, r.targetState(down, true))
+        // Hardware-latching alternative: 127 means on, 0 means off.
+        val physicalLatch = r.copy(ccMode = "absolute")
+        assertEquals(true, physicalLatch.targetState(down, false))
+        assertEquals(false, physicalLatch.targetState(up, true))
+    }
+
+    @Test fun previousMuteModeStillInterprets127And0AsAbsoluteState() {
+        val old = MidiRoute(21, "mpk", 1, "cc", 28, 28, 1, "mute")
+        assertEquals(true, old.targetState(message(0xb1, 28, 127), false))
+        assertEquals(false, old.targetState(message(0xb1, 28, 0), true))
+        val new = old.copy(ccMode = "press-toggle")
+        assertEquals(null, new.targetState(message(0xb1, 28, 0), true))
+        assertEquals(false, new.targetState(message(0xb1, 28, 127), true))
+    }
+
 }

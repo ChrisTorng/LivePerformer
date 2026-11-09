@@ -48,6 +48,9 @@ fun MidiRoutingSettings(
     var last by remember { mutableStateOf("43") }
     var action by remember { mutableStateOf("note") }
     var noteBase by remember { mutableStateOf("-1") }
+    var ccMode by remember { mutableStateOf("press-toggle") }
+    var knobFirstCc by remember { mutableIntStateOf(looper.defaultKnobFirstCc("*")) }
+    var confirmControlsPreset by remember { mutableStateOf(false) }
     var scaleMode by remember { mutableStateOf("major") }
     var key by remember { mutableIntStateOf(0) }
     var octave by remember { mutableIntStateOf(2) }
@@ -69,6 +72,7 @@ fun MidiRoutingSettings(
         targetTrack = route.trackId
         action = route.action
         noteBase = route.noteBase.toString()
+        ccMode = route.ccMode
         scaleMode = route.scaleMode
         val root = if (route.noteBase >= 0) route.noteBase else 36
         key = root % 12
@@ -81,24 +85,56 @@ fun MidiRoutingSettings(
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("主鍵盤仍彈奏選取音軌；Pad 和 CC 可鎖定至其他音軌。",
             style = MaterialTheme.typography.bodySmall)
+        Text("Note Bank A：固定八鼓；Note Bank B：Bass 八個音階音。實機確認 CC Toggle 不干擾 Note 發音。",
+            style = MaterialTheme.typography.bodySmall)
         OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = {
             feedback = if (looper.applyMpkMiniMk2Preset(deviceKey))
-                "已套用 Pad：Note 36–43 → 鼓，44–51 → Bass"
-            else "請先建立鼓組與 Bass 音軌"
+                "已套用 Note A 八鼓、Note B Bass（預設 C2 大調），既有自訂調性不覆蓋"
+            else "請先建立鼓組音軌；若已有自訂 Note 路由，請自行編輯"
             onMessage(feedback)
-        }) { Text("套用 MPK mini MK2 範例", maxLines = 1) }
+        }) { Text("套用 Note A 鼓組 / Note B Bass", maxLines = 1) }
+        Text("CC Bank A（20–27）：硬體 Momentary，每次按下切換 App 狀態；" +
+            "播放、錄製、節拍器與前五軌 Solo。" +
+            " CC Bank B（28–35）：硬體 Toggle，127 開／0 關；" +
+            "第 1–7 軌 Mute 與全部靜音。功能仍可逐條修改。",
+            style = MaterialTheme.typography.bodySmall)
+        Text("Knob MIDI CC 起點（連續音量，Keybed/Controls Channel 1）",
+            style = MaterialTheme.typography.labelLarge)
+        MidiChoice(when (knobFirstCc) {
+                2 -> "CC 2–9（目前 MPK Editor 設定，建議）"
+                1 -> "CC 1–8（舊設定）"
+                70 -> "CC 70–77（選用自訂配置）"
+                else -> "CC ${knobFirstCc}–${knobFirstCc + 7}"
+            },
+            listOf("2" to "CC 2–9（目前硬體 K1–K8）",
+                "1" to "CC 1–8（舊範例，CC1 與搖桿 Y 向上衝突）",
+                "70" to "CC 70–77（需另外調整 Akai Editor）"),
+            { knobFirstCc = it.toInt() }, Modifier.fillMaxWidth())
         OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = {
-            feedback = if (looper.applyMpkMiniMk2CcBassPreset(deviceKey))
-                "已設定 CC 20–27 → Bass C2 大調，可再按編輯改調性或逐鍵音高"
-            else "請先建立 Bass 音軌，或已有 CC 20–27 路由（請按編輯）"
-            onMessage(feedback)
-        }) { Text("CC 20–27 → Bass（C2 大調）", maxLines = 1) }
-        OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = {
-            feedback = if (looper.applyMpkMiniMk2StagePreset(deviceKey))
-                "已套用 CC Bank B：28–31 各軌 Mute，32–35 播放、錄製、節拍器及下一軌"
-            else "需先有鼓組、Bass、弦樂、Lead，或 CC 28–35 已有對應規則"
-            onMessage(feedback)
-        }) { Text("套用 CC Bank B 舞台控制", maxLines = 1) }
+            confirmControlsPreset = true
+        }) { Text("套用 CC A/B 控制與 8 Knob 音量", maxLines = 1) }
+        if (confirmControlsPreset) {
+            AlertDialog(
+                onDismissRequest = { confirmControlsPreset = false },
+                title = { Text("更新 MPK 控制預設") },
+                text = { Text("將取代此裝置的 Pad CC 20–35（Channel 2）與" +
+                    " Knob CC ${knobFirstCc}–${knobFirstCc + 7}（Channel 1）" +
+                    "既有路由；Note 鼓組、Bass 音階與其他路由不變。" +
+                    "所有項目仍可再逐條編輯。") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmControlsPreset = false
+                        feedback = if (looper.applyMpkMiniMk2ControlsPreset(deviceKey, knobFirstCc))
+                            "已安裝 CC A/B Toggle 控制與 8 Knob 音量對應"
+                        else "MIDI 路由容量不足，無法套用預設"
+                        onMessage(feedback)
+                    }) { Text("取代舊 CC 設定") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmControlsPreset = false }) { Text("取消") }
+                }
+            )
+        }
         HorizontalDivider()
         Text(if (editingId == null) "新增 MIDI 路由" else "編輯第 " + editingId + " 條路由",
             style = MaterialTheme.typography.titleMedium)
@@ -107,7 +143,7 @@ fun MidiRoutingSettings(
             devices.firstOrNull { it.key == deviceKey }?.name ?: "已儲存的離線裝置",
             listOf("*" to "任何 MIDI 裝置") + devices.filter { it.outputPorts > 0 }
                 .map { it.key to (it.name + " #" + it.id) },
-            { deviceKey = it }, Modifier.fillMaxWidth())
+            { deviceKey = it; knobFirstCc = looper.defaultKnobFirstCc(it) }, Modifier.fillMaxWidth())
 
         Text("輸入 Channel／訊息", style = MaterialTheme.typography.labelLarge)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -121,6 +157,7 @@ fun MidiRoutingSettings(
                 {
                     kind = it
                     action = if (it == "program") "select-track" else "note"
+                    ccMode = if (it == "cc") "press-toggle" else "legacy"
                     if (it == "cc" && first == "36") {
                         first = "20"; last = "27"; noteBase = "36"
                     }
@@ -151,29 +188,58 @@ fun MidiRoutingSettings(
             "program" -> listOf("select-track" to "切換音軌")
             "cc" -> listOf("note" to "CC → 指定首音（半音）",
                 "scale" to "CC → 調性音階", "custom" to "CC → 逐鍵指定",
-                "volume" to "音軌音量", "pan" to "左右平衡", "master" to "總音量",
-                "mute" to "指定軌 Mute（Toggle）",
-                "solo" to "指定軌 Solo（Toggle）",
-                "play-stop" to "播放／停止（Momentary）",
-                "record-toggle" to "錄製／結束（Momentary）",
-                "metronome-toggle" to "節拍器切換（Momentary）",
+                "drum-pads" to "8 Pad 固定鼓聲功能",
+                "volume" to "指定音軌音量", "pan" to "左右平衡", "master" to "總音量",
+                "slot-volume" to "依音軌位置調整音量（Knob）",
+                "mute" to "指定軌 Mute", "solo" to "指定軌 Solo",
+                "slot-mute" to "第 1–7 軌 Mute",
+                "slot-solo" to "第 1–7 軌 Solo",
+                "mute-all" to "全部音軌 Mute",
+                "play-stop" to "播放／停止",
+                "record-toggle" to "錄製／結束",
+                "metronome-toggle" to "節拍器開關",
                 "next-track" to "選取下一軌（Momentary）")
             else -> listOf("note" to "原始／半音音高",
-                "scale" to "調性音階", "custom" to "逐鍵指定")
+                "scale" to "調性音階", "custom" to "逐鍵指定",
+                "drum-pads" to "8 Pad 固定鼓聲功能")
         }
         MidiChoice(actions.firstOrNull { it.first == action }?.second ?: "選擇動作",
             actions, { selected ->
                 action = selected
                 if (selected in setOf("play-stop", "record-toggle",
-                        "metronome-toggle", "next-track", "master")) targetTrack = 0
+                        "metronome-toggle", "next-track", "master", "mute-all",
+                        "slot-volume", "slot-mute", "slot-solo")) targetTrack = 0
                 else if (targetTrack == 0) targetTrack =
                     state.selectedId.takeIf { it != 0 } ?: state.tracks.firstOrNull()?.id ?: 0
+                if (selected in setOf("slot-volume", "slot-mute", "slot-solo") &&
+                    noteBase.toIntOrNull() !in 0..6) noteBase = "0"
                 if (selected == "custom" && custom.size != makeScale().size) {
                     custom.clear()
                     custom.addAll(makeScale())
                 }
             }, Modifier.fillMaxWidth())
 
+        if (kind == "cc" && action in setOf("play-stop", "record-toggle",
+                "metronome-toggle", "mute", "solo", "slot-mute", "slot-solo", "mute-all")) {
+            MidiChoice(when (ccMode) {
+                    "absolute" -> "硬體 Toggle（127 開／0 關）"
+                    "momentary" -> "Momentary（按下執行）"
+                    "legacy" -> "沿用舊版行為"
+                    else -> "軟體 Toggle（建議）"
+                },
+                listOf("press-toggle" to "軟體 Toggle：每按一下切換（硬體用 Momentary）",
+                    "absolute" to "硬體 Toggle：CC 127 開、CC 0 關",
+                    "momentary" to "Momentary：按下執行",
+                    "legacy" to "沿用舊版行為"),
+                { ccMode = it }, Modifier.fillMaxWidth())
+        }
+        if (action in setOf("slot-volume", "slot-mute", "slot-solo")) {
+            MidiChoice("音軌位置 " + ((noteBase.toIntOrNull() ?: 0) + 1),
+                (0..6).map { it.toString() to ("第 " + (it + 1) + " 軌") },
+                { noteBase = it }, Modifier.fillMaxWidth())
+            Text("跟隨演奏畫面上的音軌排序，尚未建立的軌道暫不執行。",
+                style = MaterialTheme.typography.bodySmall)
+        }
         if (action == "note") {
             OutlinedTextField(noteBase, onValueChange = {
                 noteBase = it.filter { c -> c.isDigit() || c == '-' }.take(4)
@@ -236,7 +302,7 @@ fun MidiRoutingSettings(
                 color = MaterialTheme.colorScheme.error)
         }
 
-        if (action in setOf("note", "scale", "custom")) {
+        if (action in setOf("note", "scale", "custom", "drum-pads")) {
             val start = first.toIntOrNull() ?: -1
             val end = last.toIntOrNull() ?: -1
             if (start in 0..127 && end in start..127) {
@@ -244,6 +310,7 @@ fun MidiRoutingSettings(
                 val preview = (start..end.coerceAtMost(start + 7)).mapIndexed { i, input ->
                     val pitch = when (action) {
                         "scale" -> MidiPitch.scale(base, i, scaleMode)
+                        "drum-pads" -> DrumPads.gmNotes.getOrNull(i) ?: -1
                         "custom" -> custom.getOrNull(i)?.toIntOrNull() ?: -1
                         else -> (noteBase.toIntOrNull() ?: -1).let { if (it < 0) input else it + i }
                     }
@@ -262,7 +329,7 @@ fun MidiRoutingSettings(
             val customMap = if (action == "custom") custom.map { it.toIntOrNull() ?: -2 }
                 else emptyList()
             val ok = looper.putMidiRoute(editingId, deviceKey, ch, kind, start, end,
-                targetTrack, action, pitch, scaleMode, customMap)
+                targetTrack, action, pitch, scaleMode, customMap, ccMode)
             feedback = if (ok) "路由已儲存至專案" else
                 "無效路由：請確認 Ch、編號、音高與目標音軌。"
             if (ok) editingId = null
@@ -275,8 +342,9 @@ fun MidiRoutingSettings(
                 modifier = Modifier.fillMaxWidth()) { Text("取消編輯") }
         }
         if (feedback.isNotBlank()) Text(feedback, style = MaterialTheme.typography.bodySmall)
-        Text("Bank B 建議：Pad 1–4 設 Toggle 控制 Mute，Pad 5–8 設 Momentary 控制播放、錄製、節拍器與下一軌。Toggle 依 CC 127／0 設定開關狀態，切換專案後控制器狀態未必同步。", style = MaterialTheme.typography.bodySmall)
-        Text("CC 20 是控制器編號，不是音高。若用 CC Pad 彈奏，請在硬體使用 Momentary 模式：按下 127、放開 0。",
+        Text("CC Bank A 硬體 Momentary → 軟體切換，CC Bank B 硬體 Toggle → 依 127／0 設定開關。" +
+            "Note A/B 不做額外按鍵鎖定。搖桿 Y AXIS 的「CC 2」代表雙 CC 模式，" +
+            "向上送 CC1、向下送 CC11，不會與 Knob K1 的 CC2 衝突。",
             style = MaterialTheme.typography.bodySmall)
         HorizontalDivider()
         Text("已儲存的 MIDI 路由：" + state.midiRoutes.size,
@@ -285,7 +353,10 @@ fun MidiRoutingSettings(
         state.midiRoutes.forEach { route ->
             val device = if (route.deviceKey == "*") "任何裝置" else
                 devices.firstOrNull { it.key == route.deviceKey }?.name ?: "離線裝置"
-            val name = state.tracks.firstOrNull { it.id == route.trackId }?.name ?: "主音量"
+            val name = if (route.action in setOf("slot-volume", "slot-mute", "slot-solo"))
+                "第 ${route.noteBase + 1} 軌"
+                else if (route.trackId == 0) "全域／總控"
+                else state.tracks.firstOrNull { it.id == route.trackId }?.name ?: "已刪除音軌"
             Text(device + " / Ch " + (route.channel + 1) + " / " +
                 route.kind.uppercase() + " " + route.first + "–" + route.last,
                 style = MaterialTheme.typography.bodySmall)
@@ -293,6 +364,11 @@ fun MidiRoutingSettings(
                 "scale" -> MidiPitch.name(route.noteBase) +
                     if (route.scaleMode == "minor") " 自然小調" else " 大調"
                 "custom" -> "逐鍵指定"
+                "drum-pads" -> "固定 8 Pad 鼓聲功能"
+                "slot-volume" -> "位置音量"
+                "slot-mute" -> "位置靜音"
+                "slot-solo" -> "位置獨奏"
+                "mute-all" -> "全部靜音"
                 "note" -> if (route.noteBase < 0) "原音" else "首音 " + MidiPitch.name(route.noteBase)
                 else -> route.action
             }, style = MaterialTheme.typography.bodySmall)
