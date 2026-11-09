@@ -14,7 +14,7 @@ class MpkControlsAndroidTest {
             controller.newProject(withTemplateTracks = true)
             val key = "mpk-controls-test"
             assertTrue(controller.applyMpkMiniMk2Preset(key))
-            assertTrue(controller.applyMpkMiniMk2ControlsPreset(key, firstKnobCc = 70))
+            assertTrue(controller.applyMpkMiniMk2ControlsPreset(key)) // Editor screenshot: K1..K8 = CC 2..9
             val routes = controller.state.value.midiRoutes
             val notes = routes.filter { it.kind == "note" && it.deviceKey == key }
             assertEquals(listOf("drum-pads", "scale"), notes.sortedBy { it.first }.map { it.action })
@@ -31,11 +31,21 @@ class MpkControlsAndroidTest {
                 cc.single { it.first == number && it.channel == 1 }.action
             })
             assertEquals(List(7) { "slot-volume" } + "master",
-                (70..77).map { number ->
+                (2..9).map { number ->
                     cc.single { it.first == number && it.channel == 0 }.action
                 })
-            assertTrue(cc.filter { it.channel == 1 }.all { it.ccMode == "press-toggle" })
-            // Switching hardware CC profile never corrupts Note bank routing.
+            assertTrue(cc.filter { it.channel == 1 && it.first in 20..27 }
+                .all { it.ccMode == "press-toggle" }) // Physical Bank A = Momentary
+            assertTrue(cc.filter { it.channel == 1 && it.first in 28..35 }
+                .all { it.ccMode == "absolute" }) // Physical Bank B = Toggle
+            assertEquals(2, controller.defaultKnobFirstCc(key))
+            val joystickUp = MidiEvent(key, "MPKmini2", 1, 0, 0xb0, 1, 95)
+            val joystickDown = joystickUp.copy(data1 = 11)
+            val pitchBend = joystickUp.copy(status = 0xe0, data1 = 0, data2 = 64)
+            assertFalse(cc.any { it.matches(joystickUp) }) // CC1 Modulation
+            assertFalse(cc.any { it.matches(joystickDown) }) // CC11 Expression
+            assertFalse(cc.any { it.matches(pitchBend) })
+            // Switching hardware knob profile never corrupts Note bank routing.
             assertTrue(controller.applyMpkMiniMk2ControlsPreset(key, 70))
             assertEquals(24, controller.state.value.midiRoutes.count {
                 it.kind == "cc" && it.deviceKey == key
