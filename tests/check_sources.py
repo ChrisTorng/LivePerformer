@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.4.11' in workflow and 'versionCode = 20' in gradle
+assert 'v0.4.12' in workflow and 'versionCode = 21' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -53,7 +53,7 @@ assert 'onErrorAfterClose' in native and 'builder.setDeviceId(deviceId)' in nati
 assert 'fluid_synth_set_gain' in native and 'NativeEngine.setGain' in activity
 assert 'instrument-families' in (root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPicker.kt').read_text()
 assert 'putFloat("velocity"' in activity and 'putFloat("gain"' in activity
-assert 'putInt("baseNote"' in activity
+assert 'looper.setKeyboardBase' in activity
 print('PASS: AAudio device recovery, selected preset, velocity, octave and gain persistence')
 
 # MIDI loop wiring and persistence.
@@ -227,3 +227,14 @@ assert 'CC 2–9（目前硬體 K1–K8）' in routing_ui
 assert 'CC Bank B（28–35）：硬體 Toggle' in routing_ui
 assert '向上送 CC1、向下送 CC11' in routing_ui
 print('PASS: v0.4.11 MPK editor-sourced CC2–9 knobs, separate physical CC A/B modes and joystick')
+
+
+# Count-in and adaptive MIDI keyboard/level meter regression checks.
+assert '"countInEnabled"' in looper and '"countInBars"' in looper
+assert 'setCountInBars' in looper and 'if (countInActive) return' in looper
+assert 'setTrackVolume' in looper and '"keyboardBase"' in looper
+assert 'VerticalLevelMeter' in panel and 'masterPeak' in panel and 'lastMidi' in panel
+assert 'configureRange(firstKey, lastKey)' in panel
+assert 'NativeEngine.outputPeak()' in activity and 'outputPeak_' in native
+assert '錄製前預備拍' in activity
+print('PASS: count-in persistence, MIDI level indicators, and adaptive keyboard')
