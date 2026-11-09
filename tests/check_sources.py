@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.4.10' in workflow and 'versionCode = 19' in gradle
+assert 'v0.4.11' in workflow and 'versionCode = 20' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -205,7 +205,7 @@ assert 'fun forPreset(' in drum and 'fun reset(' in drum
 assert 'drum-pads' in routing and 'drum-pads' in looper and 'drum-pads' in routing_ui
 assert 'drumMaps.forPreset(' in looper and 'sendToSynth(track, e.type' in looper
 assert 'importDrumMap' in activity and 'openDrumMap' in activity
-assert 'LivePerformer-v0.4.10.apk' in workflow
+assert 'LivePerformer-v0.4.11.apk' in workflow
 assert (root/'drum-maps/gm-standard.drummap.json').exists()
 assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/DrumPadsTest.kt').exists()
 print('PASS: v0.4.9 global eight-pad drum mapping and versioned APK')
@@ -218,3 +218,12 @@ assert 'firstKnobCc' in looper and 'mute-all' in looper
 assert 'knobFirstCc' in routing_ui and 'confirmControlsPreset' in routing_ui
 assert (root/'app/src/androidTest/java/tw/idv/christorng/liveperformer/MpkControlsAndroidTest.kt').exists()
 print('PASS: v0.4.10 MPK dual Note banks, CC A/B switch banks and eight volume knobs')
+
+# v0.4.11 physical MKII Editor configuration from user's real controller.
+assert 'mpkPrefs.getInt("knobFirst:*", 2)' in looper
+assert 'firstKnobCc: Int = 2' in looper
+assert 'if (number <= 27) "press-toggle" else "absolute"' in looper
+assert 'CC 2–9（目前硬體 K1–K8）' in routing_ui
+assert 'CC Bank B（28–35）：硬體 Toggle' in routing_ui
+assert '向上送 CC1、向下送 CC11' in routing_ui
+print('PASS: v0.4.11 MPK editor-sourced CC2–9 knobs, separate physical CC A/B modes and joystick')
