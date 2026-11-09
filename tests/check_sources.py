@@ -210,14 +210,14 @@ assert (root/'drum-maps/gm-standard.drummap.json').exists()
 assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/DrumPadsTest.kt').exists()
 print('PASS: v0.4.9 global eight-pad drum mapping and versioned APK')
 
-# v0.4.10: CC controls are no longer sound notes. Hardware Momentary stays safe for Bass.
+# v0.4.11: MKII screenshot shows physical CC A Momentary, CC B Toggle; Note A/B are independent in user testing.
 assert 'applyMpkMiniMk2ControlsPreset' in looper
 assert 'ccMode' in looper and 'press-toggle' in looper
 assert 'slot-volume' in looper and 'slot-mute' in looper and 'slot-solo' in looper
 assert 'firstKnobCc' in looper and 'mute-all' in looper
 assert 'knobFirstCc' in routing_ui and 'confirmControlsPreset' in routing_ui
 assert (root/'app/src/androidTest/java/tw/idv/christorng/liveperformer/MpkControlsAndroidTest.kt').exists()
-print('PASS: v0.4.10 MPK dual Note banks, CC A/B switch banks and eight volume knobs')
+print('PASS: v0.4.11 MPK dual Note banks, CC A/B hardware modes and eight volume knobs')
 
 # v0.4.11 physical MKII Editor configuration from user's real controller.
 assert 'mpkPrefs.getInt("knobFirst:*", 2)' in looper
