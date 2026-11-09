@@ -989,7 +989,8 @@ class LoopController(context: Context) {
             matchesDevice(r) && r.kind == "cc" &&
                 ((r.channel in setOf(-1, 1) && r.first <= 35 && r.last >= 20) ||
                  (r.channel in setOf(-1, 0) &&
-                     r.first <= firstKnobCc + 7 && r.last >= firstKnobCc))
+                     (r.action in setOf("slot-volume", "master") ||
+                      (r.first <= firstKnobCc + 7 && r.last >= firstKnobCc))))
         }
         // Slot targets are positions in the current performance track order.
         val assignments = mutableListOf<Triple<Int, String, Int>>()
