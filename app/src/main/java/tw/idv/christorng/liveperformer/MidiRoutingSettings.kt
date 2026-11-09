@@ -85,24 +85,30 @@ fun MidiRoutingSettings(
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("主鍵盤仍彈奏選取音軌；Pad 和 CC 可鎖定至其他音軌。",
             style = MaterialTheme.typography.bodySmall)
-        Text("Note 模式：Bank A 八鼓、Bank B Bass 八音音階；硬體 Pad 保持 Momentary。",
+        Text("Note Bank A：固定八鼓；Note Bank B：Bass 八個音階音。實機確認 CC Toggle 不干擾 Note 發音。",
             style = MaterialTheme.typography.bodySmall)
         OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = {
             feedback = if (looper.applyMpkMiniMk2Preset(deviceKey))
-                "已套用 Note A 鼓組與 Note B Bass 音階（C2 大調）；可編輯 Bass 的調性與八度"
+                "已套用 Note A 八鼓、Note B Bass（預設 C2 大調），既有自訂調性不覆蓋"
             else "請先建立鼓組音軌；若已有自訂 Note 路由，請自行編輯"
             onMessage(feedback)
         }) { Text("套用 Note A 鼓組 / Note B Bass", maxLines = 1) }
-        Text("CC 模式：Pad 以 Momentary 發送 127／0，App 在每次按下時切換開關。" +
-            " Bank A：播放、錄製、節拍器、前五軌 Solo；" +
-            " Bank B：第 1–7 軌 Mute、全部 Mute。",
+        Text("CC Bank A（20–27）：硬體 Momentary，每次按下切換 App 狀態；" +
+            "播放、錄製、節拍器與前五軌 Solo。" +
+            " CC Bank B（28–35）：硬體 Toggle，127 開／0 關；" +
+            "第 1–7 軌 Mute 與全部靜音。功能仍可逐條修改。",
             style = MaterialTheme.typography.bodySmall)
         Text("Knob MIDI CC 起點（連續音量，Keybed/Controls Channel 1）",
             style = MaterialTheme.typography.labelLarge)
-        MidiChoice(if (knobFirstCc == 1) "CC 1–8（少改 Editor；搖桿 CC1 可能重複）"
-                   else "CC 70–77（建議獨立設定）",
-            listOf("1" to "CC 1–8（原範例；注意搖桿 CC1）",
-                "70" to "CC 70–77（建議，需在 Akai Editor 調整）"),
+        MidiChoice(when (knobFirstCc) {
+                2 -> "CC 2–9（目前 MPK Editor 設定，建議）"
+                1 -> "CC 1–8（舊設定）"
+                70 -> "CC 70–77（選用自訂配置）"
+                else -> "CC ${knobFirstCc}–${knobFirstCc + 7}"
+            },
+            listOf("2" to "CC 2–9（目前硬體 K1–K8）",
+                "1" to "CC 1–8（舊範例，CC1 與搖桿 Y 向上衝突）",
+                "70" to "CC 70–77（需另外調整 Akai Editor）"),
             { knobFirstCc = it.toInt() }, Modifier.fillMaxWidth())
         OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = {
             confirmControlsPreset = true
@@ -336,8 +342,9 @@ fun MidiRoutingSettings(
                 modifier = Modifier.fillMaxWidth()) { Text("取消編輯") }
         }
         if (feedback.isNotBlank()) Text(feedback, style = MaterialTheme.typography.bodySmall)
-        Text("MPK mini MKII 的 Note／CC 共用硬體 Pad Toggle 設定。建議硬體維持 Momentary，" +
-            "由 App 將 CC 20–35 解讀為軟體 Toggle，以免 Bass 音符鎖住。Knob CC 起點可在上方選擇。",
+        Text("CC Bank A 硬體 Momentary → 軟體切換，CC Bank B 硬體 Toggle → 依 127／0 設定開關。" +
+            "Note A/B 不做額外按鍵鎖定。搖桿 Y AXIS 的「CC 2」代表雙 CC 模式，" +
+            "向上送 CC1、向下送 CC11，不會與 Knob K1 的 CC2 衝突。",
             style = MaterialTheme.typography.bodySmall)
         HorizontalDivider()
         Text("已儲存的 MIDI 路由：" + state.midiRoutes.size,
