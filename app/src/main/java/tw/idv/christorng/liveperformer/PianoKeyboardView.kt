@@ -11,9 +11,9 @@ import kotlin.math.floor
 
 /** Key widths adapt to the requested pitch range; monitoring is non-interactive. */
 class PianoKeyboardView(context: Context) : View(context) {
-    var baseNote = 47
+    var baseNote = 48
         private set
-    var endNote = 71
+    var endNote = 72
         private set
     fun configureRange(start: Int, end: Int) {
         val from = start.coerceIn(0, 127)
@@ -88,8 +88,8 @@ class PianoKeyboardView(context: Context) : View(context) {
             canvas.drawRoundRect(x - bw / 2, 0f, x + bw / 2, height * .63f,
                 6f, 6f, if (isPressed(note)) pressed else black)
         }
-        // True incoming MIDI NoteOn velocity (not gain, output RMS or a mixer level).
-        // Draw independent bars so simultaneous chords preserve each note's intensity.
+        // One horizontal height marker per held MIDI note (not a vertical bar or audio RMS).
+        // Velocity 127 places the line near the top; low velocity near the bottom.
         showExternalVelocities.forEach { (note, rawVelocity) ->
             if (note !in baseNote..endNote || rawVelocity <= 0) return@forEach
             val center = if (isWhite(note)) {
@@ -97,11 +97,14 @@ class PianoKeyboardView(context: Context) : View(context) {
                 if (index < 0) return@forEach
                 (index + .5f) * step
             } else blackX(note, whites, step)
-            val barWidth = if (isWhite(note)) step * .22f else bw * .35f
+            val markerHalfWidth = if (isWhite(note)) step * .42f else bw * .48f
             val strength = rawVelocity.coerceIn(1, 127) / 127f
-            val bottom = height.toFloat()
-            canvas.drawRect(center - barWidth / 2, bottom - height * strength,
-                center + barWidth / 2, bottom, velocityPaint)
+            val margin = 5f * resources.displayMetrics.density
+            val y = margin + (height - 2 * margin) * (1f - strength)
+            val markerHeight = 3f * resources.displayMetrics.density
+            canvas.drawRoundRect(center - markerHalfWidth, y - markerHeight / 2f,
+                center + markerHalfWidth, y + markerHeight / 2f,
+                markerHeight / 2f, markerHeight / 2f, velocityPaint)
         }
     }
     private fun isPressed(note: Int): Boolean =
