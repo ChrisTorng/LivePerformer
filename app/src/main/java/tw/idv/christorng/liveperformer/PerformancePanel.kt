@@ -5,6 +5,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
@@ -25,6 +28,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -34,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.math.ceil
 import kotlin.math.floor
+import androidx.compose.ui.geometry.CornerRadius
 
 enum class KeyboardMode(val title: String) {
     PLAY("鍵盤"), MONITOR("監看"), HIDDEN("隱藏");
@@ -65,7 +70,7 @@ private fun SmallAction(label: String, onClick: () -> Unit) {
 private fun TransportButton(symbol: String, description: String, recording: Boolean = false, onClick: () -> Unit) {
     val background = if (recording) Color(0xFFAD3030) else MaterialTheme.colorScheme.primary
     Box(
-        modifier = Modifier.size(width = 59.dp, height = 50.dp)
+        modifier = Modifier.size(width = 53.dp, height = 50.dp)
             .background(background, RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
@@ -78,7 +83,7 @@ private fun TransportButton(symbol: String, description: String, recording: Bool
 private fun MetronomeToggle(enabled: Boolean, onClick: () -> Unit) {
     val active = MaterialTheme.colorScheme.primary
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    Box(Modifier.size(43.dp).clickable(onClick = onClick)
+    Box(Modifier.size(40.dp).clickable(onClick = onClick)
         .background(if (enabled) active.copy(alpha = 0.2f)
             else MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp)),
         contentAlignment = Alignment.Center) {
@@ -101,7 +106,7 @@ private fun MetronomeToggle(enabled: Boolean, onClick: () -> Unit) {
 @Composable
 private fun TrackToggle(label: String, selected: Boolean, color: Color, onClick: () -> Unit) {
     Box(
-        modifier = Modifier.width(38.dp).height(43.dp)
+        modifier = Modifier.width(34.dp).height(42.dp)
             .background(if (selected) color else MaterialTheme.colorScheme.surface,
                 RoundedCornerShape(8.dp))
             .clickable(onClick = onClick),
@@ -136,6 +141,60 @@ private fun VerticalLevelMeter(
     }
 }
 
+/**
+ * Master gain is a true vertical fader: top=150%, bottom=0%.
+ * The narrow adjacent meter continues to represent the real PCM output peak.
+ */
+@Composable
+fun VerticalGainSlider(value: Float, onValueChange: (Float) -> Unit) {
+    val primary = MaterialTheme.colorScheme.primary
+    val background = MaterialTheme.colorScheme.surfaceVariant
+    val onChange by rememberUpdatedState(onValueChange)
+    val edge = with(LocalDensity.current) { 12.dp.toPx() }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("${(value * 100).toInt()}%", fontSize = 13.sp)
+        Canvas(
+            Modifier.width(60.dp).height(172.dp)
+                .pointerInput(Unit) {
+                    detectTapGestures { offset ->
+                        val travel = (size.height - edge * 2f).coerceAtLeast(1f)
+                        onChange(((size.height - edge - offset.y) / travel * 1.5f).coerceIn(0f, 1.5f))
+                    }
+                }
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onVerticalDrag = { change, _ ->
+                            change.consume()
+                            val travel = (size.height - edge * 2f).coerceAtLeast(1f)
+                            onChange(((size.height - edge - change.position.y) / travel * 1.5f)
+                                .coerceIn(0f, 1.5f))
+                        }
+                    )
+                }
+        ) {
+            val top = edge
+            val bottom = size.height - edge
+            val travel = bottom - top
+            val middle = size.width / 2f
+            val ratio = (value / 1.5f).coerceIn(0f, 1f)
+            drawRoundRect(background, Offset(middle - 5.dp.toPx(), top),
+                Size(10.dp.toPx(), travel), CornerRadius(5.dp.toPx()))
+            drawRoundRect(primary, Offset(middle - 5.dp.toPx(), bottom - travel * ratio),
+                Size(10.dp.toPx(), travel * ratio), CornerRadius(5.dp.toPx()))
+            drawCircle(primary, radius = 10.dp.toPx(),
+                center = Offset(middle, bottom - travel * ratio))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            TextButton(onClick = { onValueChange((value - 0.05f).coerceAtLeast(0f)) }) {
+                Text("−")
+            }
+            TextButton(onClick = { onValueChange((value + 0.05f).coerceAtMost(1.5f)) }) {
+                Text("+")
+            }
+        }
+    }
+}
+
 @Composable
 fun PerformancePanel(
     state: LoopView,
@@ -162,7 +221,14 @@ fun PerformancePanel(
     val landscape = LocalConfiguration.current.orientation ==
         android.content.res.Configuration.ORIENTATION_LANDSCAPE
     var showVolume by remember { mutableStateOf(false) }
-    val labelWidth = if (landscape) 149.dp else 142.dp
+    val context = LocalContext.current
+    val displayPrefs = remember(context) {
+        context.getSharedPreferences("performer", android.content.Context.MODE_PRIVATE)
+    }
+    // One setting for portrait/landscape. Width is clamped independently by screen size.
+    val paneFraction = remember(displayPrefs) {
+        mutableFloatStateOf(displayPrefs.getFloat("trackPaneFraction", 0.5f).coerceIn(0.15f, 0.85f))
+    }
     val itemHeight = if (landscape) 59.dp else 64.dp
     val dragThreshold = with(LocalDensity.current) { (itemHeight + 3.dp).toPx() }
     val keyboardHeight = when (keyboardMode) {
@@ -173,8 +239,12 @@ fun PerformancePanel(
     val anySolo = state.tracks.any { it.solo }
     val selectedTrack = state.tracks.firstOrNull { it.id == state.selectedId }
     val visibleSemitones = 24 // Touch PLAY must remain at least two octaves wide.
-    var shownBase by remember(state.selectedId) { mutableIntStateOf(baseNote.coerceIn(0, 103)) }
-    LaunchedEffect(baseNote, state.selectedId) { shownBase = baseNote.coerceIn(0, 103) }
+    var shownBase by remember(state.selectedId) {
+        mutableIntStateOf(KeyboardOctaveRange.floorC(baseNote).coerceAtMost(96))
+    }
+    LaunchedEffect(baseNote, state.selectedId) {
+        shownBase = KeyboardOctaveRange.floorC(baseNote).coerceAtMost(96)
+    }
     LaunchedEffect(state.keyboardNotes, keyboardMode, state.selectedId) {
         if (keyboardMode == KeyboardMode.PLAY && !keyboard.hasActiveTouches) {
             val min = state.keyboardNotes.minOrNull()
@@ -186,7 +256,7 @@ fun PerformancePanel(
                 } else if (max > candidate + visibleSemitones) {
                     while (max > candidate + visibleSemitones) candidate += 12
                 }
-                shownBase = candidate.coerceIn(0, 127 - visibleSemitones)
+                shownBase = KeyboardOctaveRange.floorC(candidate).coerceIn(0, 96)
             }
         }
     }
@@ -196,11 +266,12 @@ fun PerformancePanel(
         state.keyboardNotes.toList()).minOrNull()
     val monitorUpper = (recordedRanges.map { it.last } +
         state.keyboardNotes.toList()).maxOrNull()
-    val firstKey = if (keyboardMode == KeyboardMode.MONITOR && monitorLower != null)
-        (monitorLower - 1).coerceAtLeast(0) else shownBase.coerceIn(0, 127 - visibleSemitones)
-    val lastKey = if (keyboardMode == KeyboardMode.MONITOR && monitorUpper != null)
-        (monitorUpper + 1).coerceIn(firstKey, 127)
-        else (firstKey + visibleSemitones).coerceAtMost(127)
+    val monitoringRange = KeyboardOctaveRange.monitorBounds(
+        monitorLower, monitorUpper, shownBase)
+    val firstKey = if (keyboardMode == KeyboardMode.MONITOR)
+        monitoringRange.first else shownBase.coerceIn(0, 96)
+    val lastKey = if (keyboardMode == KeyboardMode.MONITOR)
+        monitoringRange.last else firstKey + visibleSemitones
     Column(Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 2.dp)) {
         // Project/system configuration are deliberately separate from stage controls.
         Row(Modifier.fillMaxWidth().height(39.dp), verticalAlignment = Alignment.CenterVertically,
@@ -215,42 +286,57 @@ fun PerformancePanel(
 
         Row(Modifier.fillMaxWidth().height(58.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(if (landscape) 9.dp else 3.dp)) {
+            horizontalArrangement = Arrangement.spacedBy(if (landscape) 8.dp else 2.dp)) {
             TransportButton(if (state.playing) "■" else "▶",
                 if (state.playing) "停止" else "播放") { looper.playStop() }
             TransportButton(if (state.recording || state.armed) "■" else "●", "錄製",
                 recording = true) { looper.recordPause() }
-            if (state.recording || state.armed)
-                Text(if (state.countInBeatsLeft > 0) "預備 ${state.countInBeatsLeft} 拍"
-                    else if (state.armed) "待錄" else "REC",
-                    color = Color(0xFFF87171), fontSize = 11.sp)
             MetronomeToggle(state.metronome) { looper.setMetronome(!state.metronome) }
-            Column(horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.width(63.dp).clickable { looper.tapTempo() }) {
-                Text("${state.bpm} BPM", fontSize = 12.sp, maxLines = 1)
+            Column(Modifier.width(69.dp).height(50.dp).clickable { looper.tapTempo() },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceEvenly) {
+                Text("${state.bpm} BPM", fontSize = 13.sp, maxLines = 1)
                 Text(if (state.tapCount == 0) "TAP" else "TAP ${state.tapCount}/4",
-                    color = MaterialTheme.colorScheme.primary, fontSize = 10.sp)
+                    color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, maxLines = 1)
             }
-            SmallAction(if (state.tapRecordArmed) "Tap ●" else "Tap 錄",
-                { looper.setTapRecordArmed(!state.tapRecordArmed) })
+            Column(Modifier.width(56.dp).height(50.dp)
+                .clickable { looper.setTapRecordArmed(!state.tapRecordArmed) },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceEvenly) {
+                Text(if (state.tapRecordArmed) "取消 Tap" else "Tap 錄",
+                    color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, maxLines = 1)
+                Text(when {
+                    state.countInBeatsLeft > 0 -> "預備${state.countInBeatsLeft}拍"
+                    state.recording -> "錄製中"
+                    state.armed -> "待錄"
+                    state.tapRecordArmed -> "已待命"
+                    else -> "待命"
+                }, color = if (state.recording || state.armed || state.tapRecordArmed)
+                    Color(0xFFF87171) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 10.sp, maxLines = 1)
+            }
             Spacer(Modifier.weight(1f))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box {
-                SmallAction("音量", { showVolume = true })
-                DropdownMenu(expanded = showVolume, onDismissRequest = { showVolume = false }) {
-                    Column(Modifier.width(210.dp).padding(12.dp)) {
-                        Text("主音量 ${(volume * 100).toInt()}%")
-                        Slider(value = volume, onValueChange = onVolume,
-                            valueRange = 0f..1.5f)
+                    SmallAction("音量", { showVolume = true })
+                    DropdownMenu(expanded = showVolume, onDismissRequest = { showVolume = false }) {
+                        Column(Modifier.padding(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("主音量")
+                            VerticalGainSlider(volume, onVolume)
+                        }
                     }
-                }
                 }
                 VerticalLevelMeter(volume / 1.5f, masterPeak,
                     false, Modifier.height(43.dp))
             }
         }
 
-        Box(Modifier.fillMaxWidth().weight(1f)) {
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+            val minLeft = minOf(142.dp, (maxWidth - 90.dp).coerceAtLeast(50.dp))
+            val maxLeft = (maxWidth - 90.dp).coerceAtLeast(minLeft)
+            val labelWidth = (maxWidth * paneFraction.floatValue).coerceIn(minLeft, maxLeft)
+            val density = LocalDensity.current
             LazyColumn(Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 itemsIndexed(state.tracks, key = { _, track -> track.id }) { trackIndex, track ->
@@ -386,14 +472,14 @@ fun PerformancePanel(
                     }
                 }
                 item(key = "add-track") {
-                    Row(Modifier.fillMaxWidth().height(46.dp)
+                    Row(Modifier.fillMaxWidth().height(36.dp)
                         .clickable(onClick = onAddTrack),
                         verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.width(labelWidth).fillMaxHeight()
                             .background(MaterialTheme.colorScheme.surfaceVariant,
                                 RoundedCornerShape(8.dp)),
                             contentAlignment = Alignment.Center) {
-                            Text("+", fontWeight = FontWeight.Bold, fontSize = 26.sp)
+                            Text("+", fontWeight = FontWeight.Bold, fontSize = 21.sp)
                         }
                         Spacer(Modifier.weight(1f))
                     }
@@ -407,6 +493,37 @@ fun PerformancePanel(
                 drawLine(Color.White.copy(alpha = 0.90f),
                     Offset(x, 0f), Offset(x, size.height),
                     strokeWidth = 2.dp.toPx())
+            }
+            // The separator is independent of the moving white playhead.
+            // The drag target spans all track rows, the Add button and blank lane.
+            Box(Modifier.offset(x = labelWidth - 11.dp).width(22.dp).fillMaxHeight()
+                .zIndex(20f)
+                .pointerInput(maxWidth) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            val delta = with(density) { dragAmount.toDp().value }
+                            val width = maxWidth.value.coerceAtLeast(1f)
+                            paneFraction.floatValue = (paneFraction.floatValue + delta / width)
+                                .coerceIn(minLeft.value / width, maxLeft.value / width)
+                        },
+                        onDragEnd = {
+                            displayPrefs.edit().putFloat(
+                                "trackPaneFraction", paneFraction.floatValue).apply()
+                        }
+                    )
+                },
+                contentAlignment = Alignment.BottomCenter) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val x = size.width / 2f
+                    drawLine(Color(0xFFA4ACBD), Offset(x, 0f), Offset(x, size.height),
+                        strokeWidth = 1.dp.toPx())
+                }
+                Box(Modifier.padding(bottom = 5.dp).size(width = 22.dp, height = 34.dp)
+                    .background(Color(0xFF374151), RoundedCornerShape(7.dp)),
+                    contentAlignment = Alignment.Center) {
+                    Text("↔", fontSize = 17.sp, color = Color.White)
+                }
             }
         }
 
@@ -423,9 +540,9 @@ fun PerformancePanel(
             if (keyboardMode == KeyboardMode.MONITOR) {
                 Text("${MidiPitch.name(firstKey)}–${MidiPitch.name(lastKey)}", fontSize = 11.sp)
             } else if (keyboardMode == KeyboardMode.PLAY) {
-                SmallAction("−", { onBaseNote((baseNote - 12).coerceAtLeast(0)) })
+                SmallAction("−", { onBaseNote((KeyboardOctaveRange.floorC(baseNote) - 12).coerceAtLeast(0)) })
                 Text("${MidiPitch.name(firstKey)}–${MidiPitch.name(lastKey)}", fontSize = 10.sp)
-                SmallAction("+", { onBaseNote((baseNote + 12).coerceAtMost(127 - visibleSemitones)) })
+                SmallAction("+", { onBaseNote((KeyboardOctaveRange.floorC(baseNote) + 12).coerceAtMost(96)) })
             }
         }
         if (keyboardMode != KeyboardMode.HIDDEN) {
