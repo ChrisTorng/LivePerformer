@@ -201,6 +201,8 @@ class LoopController(context: Context) {
             tracks[i].category = name
         }
         tracks.forEach { it.events.sortBy { event -> event.tick } }
+        inputTargetIds.clear()
+        inputTargetIds += selectedId
         dirty = true
     }
 
@@ -218,7 +220,12 @@ class LoopController(context: Context) {
         preRollEvents.clear()
         heldRecordingNotes.clear()
         takeHasNotes = false
+        takeHasNotesByTrack.clear()
+        heldRecordingNotesByTrack.clear()
+        recordingTargets = emptySet()
+        armedTargets = emptySet()
         keysDown.clear()
+        keyVelocities.clear()
         NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
         bpm = 120
         bars = 2
@@ -244,6 +251,8 @@ class LoopController(context: Context) {
             tracks += Track(5, 0, "鋼琴", 0, 0, category = "鋼琴")
         }
         selectedId = if (withTemplateTracks) 5 else 0
+        inputTargetIds.clear()
+        if (selectedId != 0) inputTargetIds += selectedId
         nextId = if (withTemplateTracks) 6 else 1
         refreshPrograms()
         changed()
@@ -291,44 +300,7 @@ class LoopController(context: Context) {
         )) { "不支援的拍號" }
         val newTracks = mutableListOf<Track>()
         val occupied = mutableSetOf<Int>()
-        val importedRoutes = mutableListOf<MidiRoute>()
-        val routeArray = root.optJSONArray("midiRoutes") ?: JSONArray()
-        require(routeArray.length() <= 64) { "MIDI 路由超過上限" }
-        val knownActions = setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "select-track", "tap-tempo", "tap-record",
-            "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track",
-            "slot-volume", "slot-mute", "slot-solo", "mute-all")
-        for (index in 0 until routeArray.length()) {
-            val item = routeArray.getJSONObject(index)
-            val kind = item.optString("kind", "note")
-            val action = item.optString("action", "note")
-            val first = item.optInt("first")
-            val last = item.optInt("last", 127)
-            val ch = item.optInt("channel", -1)
-            val trackId = item.optInt("trackId")
-            require(kind in setOf("note", "cc", "program") &&
-                action in knownActions && first in 0..127 && last in first..127 &&
-                ch in -1..15 && item.optString("deviceKey", "*").length <= 256) {
-                "MIDI 路由格式不正確"
-            }
-            val mapArray = item.optJSONArray("noteMap") ?: JSONArray()
-            require((action != "drum-pads" || (kind in setOf("note", "cc") && last - first == 7)) &&
-                mapArray.length() <= 16 && (action != "custom" ||
-                mapArray.length() == last - first + 1)) { "自訂 MIDI 音符映射長度不符" }
-            val map = (0 until mapArray.length()).map { mapArray.getInt(it) }
-            require(map.all { it in -1..127 }) { "自訂 MIDI 音高無效" }
-            val ccMode = item.optString("ccMode", "legacy")
-            require(ccMode in MidiRoute.ccModes) { "CC 觸發模式無效" }
-            if (action in setOf("slot-volume", "slot-mute", "slot-solo"))
-                require(kind == "cc" && item.optInt("noteBase", -1) in 0..6 && trackId == 0) {
-                    "音軌位置必須是 1–7"
-                }
-            val scaleMode = item.optString("scaleMode", "major")
-            require(scaleMode in MidiPitch.modes) { "MIDI 調式無效" }
-            importedRoutes += MidiRoute(item.optInt("id", index + 1),
-                item.optString("deviceKey", "*"), ch, kind, first, last,
-                trackId, action, item.optInt("noteBase", -1).coerceIn(-1, 127),
-                scaleMode, map, ccMode)
-        }
+        val importedRoutes = decodeMidiRoutes(root.optJSONArray("midiRoutes") ?: JSONArray())
         val saved = root.getJSONArray("tracks")
         require(saved.length() in 0..16) { "樂器軌數量不正確" }
         for (i in 0 until saved.length()) {
@@ -418,6 +390,73 @@ class LoopController(context: Context) {
             hasUnsavedChanges = false
         }
         return true
+    }
+
+    /** Parse all routes before mutating the session (JSON import is atomic). */
+    private fun decodeMidiRoutes(routeArray: JSONArray): List<MidiRoute> {
+        val importedRoutes = mutableListOf<MidiRoute>()
+        require(routeArray.length() <= 64) { "MIDI 路由超過上限" }
+        val knownActions = setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "select-track", "tap-tempo", "tap-record",
+            "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track",
+            "slot-volume", "slot-mute", "slot-solo", "mute-all")
+        for (index in 0 until routeArray.length()) {
+            val item = routeArray.getJSONObject(index)
+            val kind = item.optString("kind", "note")
+            val action = item.optString("action", "note")
+            val first = item.optInt("first")
+            val last = item.optInt("last", 127)
+            val ch = item.optInt("channel", -1)
+            val trackId = item.optInt("trackId")
+            require(kind in setOf("note", "cc", "program") &&
+                action in knownActions && first in 0..127 && last in first..127 &&
+                ch in -1..15 && item.optString("deviceKey", "*").length <= 256) {
+                "MIDI 路由格式不正確"
+            }
+            val mapArray = item.optJSONArray("noteMap") ?: JSONArray()
+            require((action != "drum-pads" || (kind in setOf("note", "cc") && last - first == 7)) &&
+                mapArray.length() <= 16 && (action != "custom" ||
+                mapArray.length() == last - first + 1)) { "自訂 MIDI 音符映射長度不符" }
+            val map = (0 until mapArray.length()).map { mapArray.getInt(it) }
+            require(map.all { it in -1..127 }) { "自訂 MIDI 音高無效" }
+            val ccMode = item.optString("ccMode", "legacy")
+            require(ccMode in MidiRoute.ccModes) { "CC 觸發模式無效" }
+            if (action in setOf("slot-volume", "slot-mute", "slot-solo"))
+                require(kind == "cc" && item.optInt("noteBase", -1) in 0..6 && trackId == 0) {
+                    "音軌位置必須是 1–7"
+                }
+            val scaleMode = item.optString("scaleMode", "major")
+            require(scaleMode in MidiPitch.modes) { "MIDI 調式無效" }
+            importedRoutes += MidiRoute(item.optInt("id", index + 1),
+                item.optString("deviceKey", "*"), ch, kind, first, last,
+                trackId, action, item.optInt("noteBase", -1).coerceIn(-1, 127),
+                scaleMode, map, ccMode)
+        }
+        return importedRoutes
+    }
+
+    /** Independent route preset: does not modify notes, tempo or instrument tracks. */
+    @Synchronized fun exportMidiRouting(): String = JSONObject()
+        .put("format", "liveperformer.midi-routes.v1")
+        .put("midiRoutes", serialize(false, false).getJSONArray("midiRoutes"))
+        .toString(2)
+
+    @Synchronized fun importMidiRouting(content: String) {
+        require(content.length <= 250_000) { "MIDI 路由 JSON 過大" }
+        val root = JSONObject(content)
+        require(root.optString("format") == "liveperformer.midi-routes.v1") {
+            "不支援的 MIDI 路由 JSON 格式"
+        }
+        val array = root.optJSONArray("midiRoutes")
+            ?: throw IllegalArgumentException("缺少 midiRoutes 陣列")
+        val decoded = decodeMidiRoutes(array)
+        require(decoded.all { it.trackId == 0 || tracks.any { track -> track.id == it.trackId } }) {
+            "匯入路由指定了不存在的音軌"
+        }
+        require(decoded.map { it.id }.distinct().size == decoded.size) { "MIDI 路由 ID 重複" }
+        midiRoutes.clear()
+        midiRoutes.addAll(decoded)
+        nextMidiRouteId = (decoded.maxOfOrNull { it.id } ?: 0) + 1
+        changed()
     }
 
     @Synchronized fun importDocument(content: String) {
@@ -954,6 +993,11 @@ class LoopController(context: Context) {
                         recordingTrack != null || armedTrack != null)?.let { target ->
                         if (target != (recordingTrack != null || armedTrack != null)) recordPause()
                     }
+                    "tap-tempo", "tap-record" -> if (event.kind == 0xb0 && event.data2 >= 64) {
+                        if (route.action == "tap-record" && tapTracker.tapCount == 0)
+                            tapRecordArmed = true
+                        tapTempo()
+                    }
                     "metronome-toggle" -> route.targetState(event, metronome)?.let {
                         if (it != metronome) setMetronome(it)
                     }
@@ -1029,18 +1073,18 @@ class LoopController(context: Context) {
         if ((id == null && midiRoutes.size >= 48) || (id != null && midiRoutes.none { it.id == id }) ||
             deviceKey.length > 256 || channel !in -1..15 ||
             kind !in setOf("note", "cc", "program") ||
-            action !in setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "select-track",
+            action !in setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "select-track", "tap-tempo", "tap-record",
                 "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track",
                 "slot-volume", "slot-mute", "slot-solo", "mute-all") ||
             (kind == "program" && action != "select-track") ||
             (kind != "program" && action == "select-track") ||
             (action in setOf("volume", "pan", "master", "mute", "solo",
-                "play-stop", "record-toggle", "metronome-toggle", "next-track",
+                "play-stop", "record-toggle", "metronome-toggle", "next-track", "tap-tempo", "tap-record",
                 "slot-volume", "slot-mute", "slot-solo", "mute-all") && kind != "cc") ||
             first !in 0..127 || last !in first..127 ||
             (trackId != 0 && tracks.none { it.id == trackId }) ||
             (trackId == 0) != (action in setOf("master", "play-stop", "record-toggle",
-                "metronome-toggle", "next-track", "slot-volume", "slot-mute", "slot-solo", "mute-all")) ||
+                "metronome-toggle", "next-track", "tap-tempo", "tap-record", "slot-volume", "slot-mute", "slot-solo", "mute-all")) ||
             noteBase !in -1..127 || scaleMode !in MidiPitch.modes ||
             ccMode !in MidiRoute.ccModes ||
             (action in setOf("slot-volume", "slot-mute", "slot-solo") && noteBase !in 0..6) ||
@@ -1369,14 +1413,16 @@ class LoopController(context: Context) {
         tracks.filter { it.muted || (anySolo && !it.solo) }.forEach {
             NativeEngine.midi(NativeEngine.CONTROLLER, it.channel, 123, 0)
             keysDown.remove(it.channel)
+            keyVelocities.remove(it.channel)
         }
     }
 
     @Synchronized fun removeTrack(id: Int) {
         val track = tracks.firstOrNull { it.id == id } ?: return
-        if (recordingTrack == id || armedTrack == id) stopRecord(absoluteTick)
+        if (id in recordingTargets || id in armedTargets) stopRecord(absoluteTick)
         NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 123, 0)
         keysDown.remove(track.channel)
+        keyVelocities.remove(track.channel)
         tracks.remove(track)
         midiRoutes.removeAll { it.trackId == id }
         silenceInaudibleTracks()
