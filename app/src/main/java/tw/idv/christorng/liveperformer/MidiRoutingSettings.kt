@@ -197,6 +197,8 @@ fun MidiRoutingSettings(
                 "mute-all" to "全部音軌 Mute",
                 "play-stop" to "播放／停止",
                 "record-toggle" to "錄製／結束",
+                "tap-tempo" to "Tap Tempo（四拍測速）",
+                "tap-record" to "Tap 錄製（第四拍啟錄）",
                 "metronome-toggle" to "節拍器開關",
                 "next-track" to "選取下一軌（Momentary）")
             else -> listOf("note" to "原始／半音音高",
@@ -207,7 +209,7 @@ fun MidiRoutingSettings(
             actions, { selected ->
                 action = selected
                 if (selected in setOf("play-stop", "record-toggle",
-                        "metronome-toggle", "next-track", "master", "mute-all",
+                        "tap-tempo", "tap-record", "metronome-toggle", "next-track", "master", "mute-all",
                         "slot-volume", "slot-mute", "slot-solo")) targetTrack = 0
                 else if (targetTrack == 0) targetTrack =
                     state.selectedId.takeIf { it != 0 } ?: state.tracks.firstOrNull()?.id ?: 0
