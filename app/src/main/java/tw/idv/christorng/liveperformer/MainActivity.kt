@@ -110,7 +110,7 @@ private fun audioOutputName(device: AudioDeviceInfo): String {
     return "$type · ${device.productName}（ID ${device.id}）"
 }
 
-private enum class SettingsPage { PROJECT, MIDI, SYSTEM, MIDI_TEST, AUDIO_TEST }
+private enum class SettingsPage { PROJECT, PROJECT_BEAT, MIDI, SYSTEM, SYSTEM_AUDIO, SYSTEM_MIDI, SYSTEM_FONTS }
 
 private data class SoundFontImportOutcome(val title: String, val details: String)
 
@@ -343,6 +343,39 @@ private fun PerformerScreen() {
     val openJson = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { handleProjectSelection(it) }
+
+    val importMidiRoutes = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val name = ImportFileTypes.displayName(context, uri)
+                require(name.endsWith(".json", ignoreCase = true)) { "請選擇 .json 路由設定檔" }
+                val text = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use {
+                        it.readText()
+                    } ?: error("無法讀取 MIDI 路由 JSON")
+                }
+                looper.importMidiRouting(text)
+                message = "已載入 MIDI 路由：$name"
+            } catch (e: Exception) { message = "MIDI 路由匯入失敗：${e.message}" }
+        }
+    }
+    val exportMidiRoutes = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val content = looper.exportMidiRouting()
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use {
+                        it.write(content)
+                    } ?: error("無法匯出 MIDI 路由 JSON")
+                }
+                message = "已匯出 MIDI 路由 JSON"
+            } catch (e: Exception) { message = "MIDI 路由匯出失敗：${e.message}" }
+        }
+    }
 
     val openDrumMap = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -773,13 +806,7 @@ private fun PerformerScreen() {
     }
 
 
-    BackHandler(enabled = settingsPage != null) {
-        settingsPage = when (settingsPage) {
-            SettingsPage.MIDI -> SettingsPage.PROJECT
-            SettingsPage.MIDI_TEST, SettingsPage.AUDIO_TEST -> SettingsPage.SYSTEM
-            else -> null
-        }
-    }
+    BackHandler(enabled = settingsPage != null) { settingsPage = null }
 
     pendingLoadAction?.let {
         AlertDialog(
@@ -905,27 +932,30 @@ private fun PerformerScreen() {
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            val projectTabs = listOf(
+                SettingsPage.PROJECT to "專案",
+                SettingsPage.PROJECT_BEAT to "節拍",
+                SettingsPage.MIDI to "MIDI 路由"
+            )
+            val systemTabs = listOf(
+                SettingsPage.SYSTEM to "映射",
+                SettingsPage.SYSTEM_AUDIO to "音訊",
+                SettingsPage.SYSTEM_MIDI to "MIDI",
+                SettingsPage.SYSTEM_FONTS to "音色"
+            )
+            val isProjectSettings = settingsPage in projectTabs.map { it.first }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = {
-                    settingsPage = when (settingsPage) {
-                        SettingsPage.MIDI -> SettingsPage.PROJECT
-                        SettingsPage.MIDI_TEST, SettingsPage.AUDIO_TEST -> SettingsPage.SYSTEM
-                        else -> null
-                    }
-                }) { Text(when (settingsPage) {
-                    SettingsPage.MIDI -> "‹ 專案"
-                    SettingsPage.MIDI_TEST, SettingsPage.AUDIO_TEST -> "‹ 系統"
-                    else -> "‹ 演奏"
-                }) }
-                Text(when (settingsPage) {
-                    SettingsPage.PROJECT -> "專案設定"
-                    SettingsPage.MIDI -> "MIDI 路由"
-                    SettingsPage.MIDI_TEST -> "MIDI 測試"
-                    SettingsPage.AUDIO_TEST -> "音訊測試"
-                    else -> "系統設定"
-                }, style = MaterialTheme.typography.titleLarge)
+                TextButton(onClick = { settingsPage = null }) { Text("‹ 演奏") }
+                Text(if (isProjectSettings) "專案設定" else "系統設定",
+                    style = MaterialTheme.typography.titleMedium)
             }
-            if (settingsPage == SettingsPage.PROJECT) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                (if (isProjectSettings) projectTabs else systemTabs).forEach { (page, label) ->
+                    FilterChip(selected = settingsPage == page, onClick = { settingsPage = page },
+                        label = { Text(label, fontSize = 12.sp, maxLines = 1) })
+                }
+            }
+            if (settingsPage == SettingsPage.PROJECT_BEAT) {
             Text("速度 / 拍號 / 循環小節", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically) {
@@ -989,6 +1019,7 @@ private fun PerformerScreen() {
             }
             Text("從停止狀態開始錄製時先打預備拍；播放及循環中的下一輪錄製不重複預備拍。",
                 style = MaterialTheme.typography.bodySmall)
+            } else if (settingsPage == SettingsPage.PROJECT) {
             HorizontalDivider()
             Text("專案", style = MaterialTheme.typography.titleMedium)
             FlowRow(Modifier.fillMaxWidth(),
@@ -1049,21 +1080,23 @@ private fun PerformerScreen() {
                 "從 Downloads 匯入的檔案會複製到專用資料庫。",
                 style = MaterialTheme.typography.bodySmall)
             Text("音軌編輯、樂器選擇及排序在演奏畫面操作。", style = MaterialTheme.typography.bodySmall)
-            HorizontalDivider()
-            Text("MIDI 路由", style = MaterialTheme.typography.titleMedium)
-            Text("目前有 " + loopState.midiRoutes.size +
-                " 條固定路由。可設定 Pad／CC 控制其他音軌，並指定音階與逐鍵對應。",
-                style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = { settingsPage = SettingsPage.MIDI },
-                modifier = Modifier.fillMaxWidth()) { Text("設定 MIDI 路由") }
             } else if (settingsPage == SettingsPage.MIDI) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(onClick = { importMidiRoutes.launch(arrayOf("application/json", "*/*")) }) {
+                    Text("載入路由 JSON")
+                }
+                OutlinedButton(onClick = { exportMidiRoutes.launch("Akai-MPK-MKII.routes.json") }) {
+                    Text("匯出路由 JSON")
+                }
+            }
+            Text(message, style = MaterialTheme.typography.bodySmall)
                 MidiRoutingSettings(loopState, looper, midiDevices, onMessage = { message = it })
-            } else if (settingsPage == SettingsPage.MIDI_TEST) {
+            } else if (settingsPage == SettingsPage.SYSTEM_MIDI) {
             MidiSystemPanel(midiDevices, midiLogs, midiClockTarget, onClockTarget = { id ->
                 midiClockTarget = id
                 midiInputRef.value?.setClockTarget(id)
             })
-            } else if (settingsPage == SettingsPage.AUDIO_TEST) {
+            } else if (settingsPage == SettingsPage.SYSTEM_AUDIO) {
             Text("音訊診斷", style = MaterialTheme.typography.titleMedium)
             Text(audioStatus, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1085,18 +1118,47 @@ private fun PerformerScreen() {
                     PackageManager.PERMISSION_GRANTED) runMeasurement()
                 else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
             }) { Text(if (measuring) "量測中…" else "開始多次回錄量測") }
-            } else {
-            Text("測試與診斷", style = MaterialTheme.typography.titleMedium)
-            FlowRow(Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedButton(onClick = { settingsPage = SettingsPage.MIDI_TEST }) {
-                    Text("MIDI 測試")
-                }
-                OutlinedButton(onClick = { settingsPage = SettingsPage.AUDIO_TEST }) {
-                    Text("音訊測試")
+            Text("觸控力度：${velocity.toInt()}")
+            Slider(value = velocity, onValueChange = {
+                velocity = it
+                settings.edit().putFloat("velocity", it).apply()
+            }, valueRange = 1f..127f)
+            Text("音量：${(gain * 100).toInt()}%")
+            Slider(value = gain, onValueChange = {
+                gain = it
+                NativeEngine.setGain(it)
+                settings.edit().putFloat("gain", it).apply()
+            }, valueRange = 0f..1.5f)
+            Text("音訊輸出", style = MaterialTheme.typography.titleMedium)
+            ExposedDropdownMenuBox(expanded = showOutputs, onExpandedChange = { showOutputs = it && !restarting }) {
+                OutlinedTextField(
+                    value = if (requestedOutputId == 0) "自動跟隨系統" else
+                        outputs.firstOrNull { it.id == requestedOutputId }?.let(::audioOutputName) ?: "自動跟隨系統",
+                    onValueChange = {}, readOnly = true, singleLine = true,
+                    label = { Text("輸出裝置") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(showOutputs) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                )
+                ExposedDropdownMenu(expanded = showOutputs, onDismissRequest = { showOutputs = false }) {
+                    DropdownMenuItem(text = { Text("自動跟隨系統") }, onClick = {
+                        showOutputs = false
+                        requestedOutputId = 0
+                        routeRevision++
+                    })
+                    outputs.forEach { output ->
+                        DropdownMenuItem(text = { Text(audioOutputName(output)) }, onClick = {
+                            showOutputs = false
+                            requestedOutputId = output.id
+                            routeRevision++
+                        })
+                    }
                 }
             }
+            OutlinedButton(onClick = { scanAudioOutputs(); routeRevision++ }, enabled = !restarting) {
+                Text(if (restarting) "重新連線中…" else "重新連接音訊")
+            }
+    
+            } else if (settingsPage == SettingsPage.SYSTEM_FONTS) {
             Text("音色庫", style = MaterialTheme.typography.titleMedium)
             fonts.forEach { font ->
                 Column {
@@ -1144,6 +1206,7 @@ private fun PerformerScreen() {
                 "待匯入資料夾可由 Files 複製檔案進去，再回 App 匯入。",
                 style = MaterialTheme.typography.bodySmall)
             Text(message, style = MaterialTheme.typography.bodySmall)
+            } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
                     baseNote = (baseNote - 12).coerceAtLeast(0)
@@ -1155,51 +1218,8 @@ private fun PerformerScreen() {
                 }) { Text("+ 八度") }
                 Text(MidiPitch.name(baseNote), modifier = Modifier.padding(top = 13.dp))
             }
-            Text("觸控力度：${velocity.toInt()}")
-            Slider(value = velocity, onValueChange = {
-                velocity = it
-                settings.edit().putFloat("velocity", it).apply()
-            }, valueRange = 1f..127f)
-            Text("音量：${(gain * 100).toInt()}%")
-            Slider(value = gain, onValueChange = {
-                gain = it
-                NativeEngine.setGain(it)
-                settings.edit().putFloat("gain", it).apply()
-            }, valueRange = 0f..1.5f)
-            Text("音訊輸出", style = MaterialTheme.typography.titleMedium)
-            ExposedDropdownMenuBox(expanded = showOutputs, onExpandedChange = { showOutputs = it && !restarting }) {
-                OutlinedTextField(
-                    value = if (requestedOutputId == 0) "自動跟隨系統" else
-                        outputs.firstOrNull { it.id == requestedOutputId }?.let(::audioOutputName) ?: "自動跟隨系統",
-                    onValueChange = {}, readOnly = true, singleLine = true,
-                    label = { Text("輸出裝置") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(showOutputs) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                )
-                ExposedDropdownMenu(expanded = showOutputs, onDismissRequest = { showOutputs = false }) {
-                    DropdownMenuItem(text = { Text("自動跟隨系統") }, onClick = {
-                        showOutputs = false
-                        requestedOutputId = 0
-                        routeRevision++
-                    })
-                    outputs.forEach { output ->
-                        DropdownMenuItem(text = { Text(audioOutputName(output)) }, onClick = {
-                            showOutputs = false
-                            requestedOutputId = output.id
-                            routeRevision++
-                        })
-                    }
-                }
             }
-            OutlinedButton(onClick = { scanAudioOutputs(); routeRevision++ }, enabled = !restarting) {
-                Text(if (restarting) "重新連線中…" else "重新連接音訊")
-            }
-    
-            val version = remember {
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
-            }
-            Text("LivePerformer v$version", style = MaterialTheme.typography.labelSmall)
-            }
+
         }
     } else {
         Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
