@@ -182,7 +182,7 @@ private fun PerformerScreen() {
     var masterPeak by remember { mutableFloatStateOf(0f) }
     var midiClockTarget by remember { mutableStateOf<Int?>(null) }
     val midiInputRef = remember { mutableStateOf<MidiInput?>(null) }
-    var baseNote by remember { mutableIntStateOf(settings.getInt("baseNote", 47).coerceIn(0, 127)) }
+    var baseNote by remember { mutableIntStateOf(settings.getInt("baseNote", 48).coerceIn(0, 127)) }
     var velocity by remember { mutableFloatStateOf(settings.getFloat("velocity", 100f).coerceIn(1f, 127f)) }
     var gain by remember { mutableFloatStateOf(settings.getFloat("gain", 0.8f).coerceIn(0f, 1.5f)) }
     var routeRevision by remember { mutableIntStateOf(0) }
@@ -600,9 +600,11 @@ private fun PerformerScreen() {
                 track.name.contains("Bass", ignoreCase = true) ||
                 track.category.contains("Bass", ignoreCase = true) ||
                 track.category.contains("貝斯") || track.name.contains("貝斯")
-            val suggested = track.keyboardBase.takeIf { it >= 0 }
-                ?: track.pitchRange?.first ?: if (bassOrDrums) 47 else 59
-            baseNote = suggested.coerceIn(0, 103)
+            // Saved/manual and recorded pitches both begin at a complete C octave.
+            // Without notes: C2 for Bass/Drums, C3 for other instruments.
+            baseNote = KeyboardOctaveRange.playBase(
+                track.pitchRange, track.keyboardBase, bassOrDrums
+            )
         }
     }
 
@@ -1215,11 +1217,11 @@ private fun PerformerScreen() {
                 style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
-                    baseNote = (baseNote - 12).coerceAtLeast(0)
+                    baseNote = (KeyboardOctaveRange.floorC(baseNote) - 12).coerceAtLeast(0)
                     looper.setKeyboardBase(loopState.selectedId, baseNote)
                 }) { Text("− 八度") }
                 OutlinedButton(onClick = {
-                    baseNote = (baseNote + 12).coerceAtMost(103)
+                    baseNote = (KeyboardOctaveRange.floorC(baseNote) + 12).coerceAtMost(96)
                     looper.setKeyboardBase(loopState.selectedId, baseNote)
                 }) { Text("+ 八度") }
                 Text(MidiPitch.name(baseNote), modifier = Modifier.padding(top = 13.dp))
@@ -1245,8 +1247,9 @@ private fun PerformerScreen() {
                 },
                 baseNote = baseNote,
                 onBaseNote = {
-                    baseNote = it
-                    looper.setKeyboardBase(loopState.selectedId, it)
+                    val aligned = KeyboardOctaveRange.floorC(it).coerceAtMost(96)
+                    baseNote = aligned
+                    looper.setKeyboardBase(loopState.selectedId, aligned)
                 },
                 velocity = velocity.toInt(), volume = gain,
                 masterPeak = masterPeak, lastMidi = lastMidi,
