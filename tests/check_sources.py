@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.4.12' in workflow and 'versionCode = 21' in gradle
+assert 'v0.4.13' in workflow and 'versionCode = 22' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -113,7 +113,7 @@ print('PASS: PR APK stable signing and CC bank stage controls wired')
 routing_ui=(root/'app/src/main/java/tw/idv/christorng/liveperformer/MidiRoutingSettings.kt').read_text()
 types=(root/'app/src/main/java/tw/idv/christorng/liveperformer/ImportFileTypes.kt').read_text()
 native_kt=(root/'app/src/main/java/tw/idv/christorng/liveperformer/NativeEngine.kt').read_text()
-assert 'SettingsPage.MIDI_TEST' in activity and 'SettingsPage.AUDIO_TEST' in activity
+assert 'SettingsPage.SYSTEM_MIDI' in activity and 'SettingsPage.SYSTEM_AUDIO' in activity
 assert 'MidiSystemPanel(midiDevices, midiLogs' in activity
 assert 'messagesByDevice[device.id]' in routing_ui
 assert 'LocalTime.now()' not in (root/'app/src/main/java/tw/idv/christorng/liveperformer/MidiDiagnostics.kt').read_text()
@@ -205,7 +205,7 @@ assert 'fun forPreset(' in drum and 'fun reset(' in drum
 assert 'drum-pads' in routing and 'drum-pads' in looper and 'drum-pads' in routing_ui
 assert 'drumMaps.forPreset(' in looper and 'sendToSynth(track, e.type' in looper
 assert 'importDrumMap' in activity and 'openDrumMap' in activity
-assert 'LivePerformer-v0.4.12.apk' in workflow
+assert 'LivePerformer-v0.4.13.apk' in workflow
 assert (root/'drum-maps/gm-standard.drummap.json').exists()
 assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/DrumPadsTest.kt').exists()
 print('PASS: v0.4.9 global eight-pad drum mapping and versioned APK')
@@ -238,3 +238,17 @@ assert 'configureRange(firstKey, lastKey)' in panel
 assert 'NativeEngine.outputPeak()' in activity and 'outputPeak_' in native
 assert '錄製前預備拍' in activity
 print('PASS: count-in persistence, MIDI level indicators, and adaptive keyboard')
+
+# v0.4.13 settings, Tap Tempo, independent routes and multi-input regression guards.
+tap = (root/'app/src/main/java/tw/idv/christorng/liveperformer/TapTempoTracker.kt').read_text()
+keyboard = (root/'app/src/main/java/tw/idv/christorng/liveperformer/PianoKeyboardView.kt').read_text()
+for needle in ('PROJECT_BEAT', 'SYSTEM_AUDIO', 'SYSTEM_MIDI', 'SYSTEM_FONTS',
+               'importMidiRoutes', 'exportMidiRoutes'):
+    assert needle in activity, needle
+for needle in ('tapTempo(', 'tapRecordArmed', 'toggleInputTarget(',
+               'inputTargetIds', 'importMidiRouting(', 'exportMidiRouting('):
+    assert needle in looper, needle
+for needle in ('Tap 錄', 'itemsIndexed', 'toggleInputTarget', 'showExternalVelocities'):
+    assert needle in panel, needle
+assert 'val tapCount' in tap and 'taps.zipWithNext' in tap
+assert 'showExternalVelocities' in keyboard and 'hasActiveTouches' in keyboard
