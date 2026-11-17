@@ -9,8 +9,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -119,7 +120,7 @@ private fun VerticalLevelMeter(
     val base = if (muted) Color(0xFF737981) else Color(0xFF2ABF86)
     val dot = if (muted) Color(0xFFB1B5BA) else
         if (signal >= .98f) Color(0xFFFF5C58) else Color(0xFFF7D764)
-    Canvas(modifier.width(10.dp).padding(vertical = 4.dp)) {
+    Canvas(modifier.width(5.dp).padding(vertical = 3.dp)) {
         val w = size.width
         val h = size.height
         drawRoundRect(Color(0xFF24303A), cornerRadius =
@@ -161,24 +162,42 @@ fun PerformancePanel(
     val landscape = LocalConfiguration.current.orientation ==
         android.content.res.Configuration.ORIENTATION_LANDSCAPE
     var showVolume by remember { mutableStateOf(false) }
-    val labelWidth = if (landscape) 172.dp else 174.dp
+    val labelWidth = if (landscape) 149.dp else 142.dp
     val itemHeight = if (landscape) 59.dp else 64.dp
     val dragThreshold = with(LocalDensity.current) { (itemHeight + 3.dp).toPx() }
     val keyboardHeight = when (keyboardMode) {
         KeyboardMode.HIDDEN -> 0.dp
         KeyboardMode.MONITOR -> if (landscape) 32.dp else 38.dp
-        KeyboardMode.PLAY -> if (landscape) 91.dp else 148.dp
+        KeyboardMode.PLAY -> if (landscape) 76.dp else 116.dp
     }
     val anySolo = state.tracks.any { it.solo }
     val selectedTrack = state.tracks.firstOrNull { it.id == state.selectedId }
-    val visibleSemitones = if (landscape) 36 else 24
-    val recordedRange = selectedTrack?.pitchRange
-    val monitorLower = listOfNotNull(recordedRange?.first,
-        state.keyboardNotes.minOrNull()).minOrNull()
-    val monitorUpper = listOfNotNull(recordedRange?.last,
-        state.keyboardNotes.maxOrNull()).maxOrNull()
+    val visibleSemitones = 24 // Touch PLAY must remain at least two octaves wide.
+    var shownBase by remember(state.selectedId) { mutableIntStateOf(baseNote.coerceIn(0, 103)) }
+    LaunchedEffect(baseNote, state.selectedId) { shownBase = baseNote.coerceIn(0, 103) }
+    LaunchedEffect(state.keyboardNotes, keyboardMode, state.selectedId) {
+        if (keyboardMode == KeyboardMode.PLAY && !keyboard.hasActiveTouches) {
+            val min = state.keyboardNotes.minOrNull()
+            val max = state.keyboardNotes.maxOrNull()
+            if (min != null && max != null) {
+                var candidate = shownBase
+                if (min < candidate) {
+                    while (min < candidate) candidate -= 12
+                } else if (max > candidate + visibleSemitones) {
+                    while (max > candidate + visibleSemitones) candidate += 12
+                }
+                shownBase = candidate.coerceIn(0, 127 - visibleSemitones)
+            }
+        }
+    }
+    val recordedRanges = state.tracks.filter { it.id in state.inputTargetIds }
+        .mapNotNull { it.pitchRange }
+    val monitorLower = (recordedRanges.map { it.first } +
+        state.keyboardNotes.toList()).minOrNull()
+    val monitorUpper = (recordedRanges.map { it.last } +
+        state.keyboardNotes.toList()).maxOrNull()
     val firstKey = if (keyboardMode == KeyboardMode.MONITOR && monitorLower != null)
-        (monitorLower - 1).coerceAtLeast(0) else baseNote.coerceIn(0, 127)
+        (monitorLower - 1).coerceAtLeast(0) else shownBase.coerceIn(0, 127 - visibleSemitones)
     val lastKey = if (keyboardMode == KeyboardMode.MONITOR && monitorUpper != null)
         (monitorUpper + 1).coerceIn(firstKey, 127)
         else (firstKey + visibleSemitones).coerceAtMost(127)
@@ -206,7 +225,14 @@ fun PerformancePanel(
                     else if (state.armed) "待錄" else "REC",
                     color = Color(0xFFF87171), fontSize = 11.sp)
             MetronomeToggle(state.metronome) { looper.setMetronome(!state.metronome) }
-            Text("${state.bpm} BPM", fontSize = 12.sp, maxLines = 1)
+            Column(horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.width(63.dp).clickable { looper.tapTempo() }) {
+                Text("${state.bpm} BPM", fontSize = 12.sp, maxLines = 1)
+                Text(if (state.tapCount == 0) "TAP" else "TAP ${state.tapCount}/4",
+                    color = MaterialTheme.colorScheme.primary, fontSize = 10.sp)
+            }
+            SmallAction(if (state.tapRecordArmed) "Tap ●" else "Tap 錄",
+                { looper.setTapRecordArmed(!state.tapRecordArmed) })
             Spacer(Modifier.weight(1f))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box {
@@ -227,7 +253,7 @@ fun PerformancePanel(
         Box(Modifier.fillMaxWidth().weight(1f)) {
             LazyColumn(Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                items(state.tracks, key = { it.id }) { track ->
+                itemsIndexed(state.tracks, key = { _, track -> track.id }) { trackIndex, track ->
                     val isSelected = state.selectedId == track.id
                     val audible = !track.muted && (!anySolo || track.solo)
                     var dragPixels by remember(track.id) { mutableFloatStateOf(0f) }
@@ -255,7 +281,8 @@ fun PerformancePanel(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
-                                Modifier.width(25.dp).fillMaxHeight()
+                                Modifier.width(27.dp).fillMaxHeight()
+                                    .clickable { looper.toggleInputTarget(track.id) }
                                     .pointerInput(track.id, dragThreshold) {
                                         detectDragGesturesAfterLongPress(
                                             onDragStart = {
@@ -278,7 +305,18 @@ fun PerformancePanel(
                                         )
                                     },
                                 contentAlignment = Alignment.Center
-                            ) { Text("⠿", fontSize = 18.sp) }
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center) {
+                                    Text("${trackIndex + 1}", fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (track.id in state.inputTargetIds)
+                                            Color(0xFFEF4444) else MaterialTheme.colorScheme.onSurface)
+                                    Box(Modifier.size(6.dp).background(
+                                        if (track.id in state.inputTargetIds)
+                                            Color(0xFFEF4444) else Color.Transparent, CircleShape))
+                                }
+                            }
                             Box(Modifier.weight(1f).fillMaxHeight()) {
                                 Box(Modifier.fillMaxSize().clickable {
                                     if (isSelected) showTrackMenu = true
@@ -323,7 +361,7 @@ fun PerformancePanel(
                             }
                             Spacer(Modifier.width(3.dp))
                             Box {
-                                Box(Modifier.width(14.dp).height(itemHeight)
+                                Box(Modifier.width(9.dp).height(itemHeight)
                                     .clickable { showTrackVolume = true },
                                     contentAlignment = Alignment.Center) {
                                     VerticalLevelMeter(track.volume / 127f,
@@ -376,9 +414,9 @@ fun PerformancePanel(
             verticalAlignment = Alignment.CenterVertically) {
             SmallAction(
                 when (keyboardMode) {
-                    KeyboardMode.PLAY -> "▤ 鍵盤"
-                    KeyboardMode.MONITOR -> "▥ 監看"
-                    KeyboardMode.HIDDEN -> "▧ 隱藏"
+                    KeyboardMode.PLAY -> "▤"
+                    KeyboardMode.MONITOR -> "▥"
+                    KeyboardMode.HIDDEN -> "▧"
                 }, onKeyboardMode)
             Text(lastMidi, modifier = Modifier.weight(1f).padding(horizontal = 5.dp),
                 fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -398,6 +436,7 @@ fun PerformancePanel(
                     it.velocity = velocity
                     it.readOnly = keyboardMode == KeyboardMode.MONITOR
                     it.showExternalNotes = state.keyboardNotes
+                    it.showExternalVelocities = state.keyboardVelocities
                 },
                 modifier = Modifier.fillMaxWidth().height(keyboardHeight)
             )
