@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.roundToInt
 import androidx.compose.ui.geometry.CornerRadius
 
 enum class KeyboardMode(val title: String) {
@@ -146,19 +147,20 @@ private fun VerticalLevelMeter(
  * The narrow adjacent meter continues to represent the real PCM output peak.
  */
 @Composable
-fun VerticalGainSlider(value: Float, onValueChange: (Float) -> Unit) {
+fun VerticalGainSlider(value: Float, onValueChange: (Float) -> Unit, maxValue: Float = 1.5f) {
     val primary = MaterialTheme.colorScheme.primary
     val background = MaterialTheme.colorScheme.surfaceVariant
     val onChange by rememberUpdatedState(onValueChange)
     val edge = with(LocalDensity.current) { 12.dp.toPx() }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("${(value * 100).toInt()}%", fontSize = 13.sp)
+        Text(if (maxValue == 1.5f) "${(value * 100).toInt()}%" 
+            else "${value.roundToInt()} / ${maxValue.toInt()}", fontSize = 13.sp)
         Canvas(
             Modifier.width(60.dp).height(172.dp)
                 .pointerInput(Unit) {
                     detectTapGestures { offset ->
                         val travel = (size.height - edge * 2f).coerceAtLeast(1f)
-                        onChange(((size.height - edge - offset.y) / travel * 1.5f).coerceIn(0f, 1.5f))
+                        onChange(((size.height - edge - offset.y) / travel * maxValue).coerceIn(0f, maxValue))
                     }
                 }
                 .pointerInput(Unit) {
@@ -166,8 +168,8 @@ fun VerticalGainSlider(value: Float, onValueChange: (Float) -> Unit) {
                         onVerticalDrag = { change, _ ->
                             change.consume()
                             val travel = (size.height - edge * 2f).coerceAtLeast(1f)
-                            onChange(((size.height - edge - change.position.y) / travel * 1.5f)
-                                .coerceIn(0f, 1.5f))
+                            onChange(((size.height - edge - change.position.y) / travel * maxValue)
+                                .coerceIn(0f, maxValue))
                         }
                     )
                 }
@@ -176,7 +178,7 @@ fun VerticalGainSlider(value: Float, onValueChange: (Float) -> Unit) {
             val bottom = size.height - edge
             val travel = bottom - top
             val middle = size.width / 2f
-            val ratio = (value / 1.5f).coerceIn(0f, 1f)
+            val ratio = (value / maxValue).coerceIn(0f, 1f)
             drawRoundRect(background, Offset(middle - 5.dp.toPx(), top),
                 Size(10.dp.toPx(), travel), CornerRadius(5.dp.toPx()))
             drawRoundRect(primary, Offset(middle - 5.dp.toPx(), bottom - travel * ratio),
@@ -185,10 +187,10 @@ fun VerticalGainSlider(value: Float, onValueChange: (Float) -> Unit) {
                 center = Offset(middle, bottom - travel * ratio))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TextButton(onClick = { onValueChange((value - 0.05f).coerceAtLeast(0f)) }) {
+            TextButton(onClick = { onValueChange((value - if (maxValue > 2f) 1f else 0.05f).coerceAtLeast(0f)) }) {
                 Text("−")
             }
-            TextButton(onClick = { onValueChange((value + 0.05f).coerceAtMost(1.5f)) }) {
+            TextButton(onClick = { onValueChange((value + if (maxValue > 2f) 1f else 0.05f).coerceAtMost(maxValue)) }) {
                 Text("+")
             }
         }
@@ -456,11 +458,11 @@ fun PerformancePanel(
                                 }
                                 DropdownMenu(expanded = showTrackVolume,
                                     onDismissRequest = { showTrackVolume = false }) {
-                                    Column(Modifier.width(204.dp).padding(12.dp)) {
-                                        Text("${track.name} 音量：${track.volume}")
-                                        Slider(track.volume.toFloat(),
-                                            { looper.setTrackVolume(track.id, it.toInt()) },
-                                            valueRange = 0f..127f)
+                                    Column(Modifier.padding(10.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(track.name, maxLines = 1)
+                                        VerticalGainSlider(track.volume.toFloat(),
+                                            { looper.setTrackVolume(track.id, it.roundToInt()) }, 127f)
                                     }
                                 }
                             }
