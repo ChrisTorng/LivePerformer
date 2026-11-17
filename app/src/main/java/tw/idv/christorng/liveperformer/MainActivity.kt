@@ -1223,6 +1223,10 @@ private fun PerformerScreen() {
                 }) { Text("+ 八度") }
                 Text(MidiPitch.name(baseNote), modifier = Modifier.padding(top = 13.dp))
             }
+            val version = remember {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
+            }
+            Text("LivePerformer v$version", style = MaterialTheme.typography.labelSmall)
             }
             }
 
