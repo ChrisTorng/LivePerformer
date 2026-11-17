@@ -1106,12 +1106,12 @@ private fun PerformerScreen() {
                 velocity = it
                 settings.edit().putFloat("velocity", it).apply()
             }, valueRange = 1f..127f)
-            Text("音量：${(gain * 100).toInt()}%")
-            Slider(value = gain, onValueChange = {
+            Text("主音量（垂直推桿）")
+            VerticalGainSlider(value = gain, onValueChange = {
                 gain = it
                 NativeEngine.setGain(it)
                 settings.edit().putFloat("gain", it).apply()
-            }, valueRange = 0f..1.5f)
+            })
             Text("音訊輸出", style = MaterialTheme.typography.titleMedium)
             ExposedDropdownMenuBox(expanded = showOutputs, onExpandedChange = { showOutputs = it && !restarting }) {
                 OutlinedTextField(
