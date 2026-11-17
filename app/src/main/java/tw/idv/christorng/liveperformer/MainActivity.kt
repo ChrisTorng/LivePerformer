@@ -928,7 +928,6 @@ private fun PerformerScreen() {
         Column(
             modifier = Modifier.fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .verticalScroll(rememberScrollState())
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -955,6 +954,9 @@ private fun PerformerScreen() {
                         label = { Text(label, fontSize = 12.sp, maxLines = 1) })
                 }
             }
+            // Keep the tab strip visible when an individual settings page scrolls.
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (settingsPage == SettingsPage.PROJECT_BEAT) {
             Text("速度 / 拍號 / 循環小節", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1207,6 +1209,9 @@ private fun PerformerScreen() {
                 style = MaterialTheme.typography.bodySmall)
             Text(message, style = MaterialTheme.typography.bodySmall)
             } else {
+            Text("鍵盤顯示與映射", style = MaterialTheme.typography.titleMedium)
+            Text("每軌可儲存自己的鍵盤起點；外部 MIDI 與播放中的音高會自動顯示。",
+                style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
                     baseNote = (baseNote - 12).coerceAtLeast(0)
@@ -1217,6 +1222,7 @@ private fun PerformerScreen() {
                     looper.setKeyboardBase(loopState.selectedId, baseNote)
                 }) { Text("+ 八度") }
                 Text(MidiPitch.name(baseNote), modifier = Modifier.padding(top = 13.dp))
+            }
             }
             }
 
