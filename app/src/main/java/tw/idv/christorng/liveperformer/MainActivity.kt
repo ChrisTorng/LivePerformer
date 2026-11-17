@@ -1099,27 +1099,6 @@ private fun PerformerScreen() {
                 midiInputRef.value?.setClockTarget(id)
             })
             } else if (settingsPage == SettingsPage.SYSTEM_AUDIO) {
-            Text("音訊診斷", style = MaterialTheme.typography.titleMedium)
-            Text(audioStatus, style = MaterialTheme.typography.bodySmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { NativeEngine.midi(NativeEngine.TEST_PULSE, 0, 0, 0) }) { Text("播放測試音") }
-                OutlinedButton(onClick = { NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0) }) {
-                    Text("全部停止")
-                }
-            }
-            Text("麥克風回錄延遲（非 MIDI 按鍵延遲）", style = MaterialTheme.typography.titleSmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = testCount == 3, onClick = { testCount = 3 },
-                    enabled = !measuring, label = { Text("3 次") })
-                FilterChip(selected = testCount == 5, onClick = { testCount = 5 },
-                    enabled = !measuring, label = { Text("5 次") })
-            }
-            Text(measurement, style = MaterialTheme.typography.bodySmall)
-            Button(enabled = !measuring && !loading, onClick = {
-                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                    PackageManager.PERMISSION_GRANTED) runMeasurement()
-                else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-            }) { Text(if (measuring) "量測中…" else "開始多次回錄量測") }
             Text("觸控力度：${velocity.toInt()}")
             Slider(value = velocity, onValueChange = {
                 velocity = it
@@ -1160,6 +1139,28 @@ private fun PerformerScreen() {
                 Text(if (restarting) "重新連線中…" else "重新連接音訊")
             }
     
+            HorizontalDivider()
+            Text("音訊診斷", style = MaterialTheme.typography.titleMedium)
+            Text(audioStatus, style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { NativeEngine.midi(NativeEngine.TEST_PULSE, 0, 0, 0) }) { Text("播放測試音") }
+                OutlinedButton(onClick = { NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0) }) {
+                    Text("全部停止")
+                }
+            }
+            Text("麥克風回錄延遲（非 MIDI 按鍵延遲）", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = testCount == 3, onClick = { testCount = 3 },
+                    enabled = !measuring, label = { Text("3 次") })
+                FilterChip(selected = testCount == 5, onClick = { testCount = 5 },
+                    enabled = !measuring, label = { Text("5 次") })
+            }
+            Text(measurement, style = MaterialTheme.typography.bodySmall)
+            Button(enabled = !measuring && !loading, onClick = {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED) runMeasurement()
+                else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+            }) { Text(if (measuring) "量測中…" else "開始多次回錄量測") }
             } else if (settingsPage == SettingsPage.SYSTEM_FONTS) {
             Text("音色庫", style = MaterialTheme.typography.titleMedium)
             fonts.forEach { font ->
