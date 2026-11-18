@@ -156,7 +156,7 @@ fun VerticalGainSlider(value: Float, onValueChange: (Float) -> Unit, maxValue: F
         Text(if (maxValue == 1.5f) "${(value * 100).toInt()}%" 
             else "${value.roundToInt()} / ${maxValue.toInt()}", fontSize = 13.sp)
         Canvas(
-            Modifier.width(60.dp).height(172.dp)
+            Modifier.width(42.dp).height(172.dp)
                 .pointerInput(Unit) {
                     detectTapGestures { offset ->
                         val travel = (size.height - edge * 2f).coerceAtLeast(1f)
@@ -183,16 +183,8 @@ fun VerticalGainSlider(value: Float, onValueChange: (Float) -> Unit, maxValue: F
                 Size(10.dp.toPx(), travel), CornerRadius(5.dp.toPx()))
             drawRoundRect(primary, Offset(middle - 5.dp.toPx(), bottom - travel * ratio),
                 Size(10.dp.toPx(), travel * ratio), CornerRadius(5.dp.toPx()))
-            drawCircle(primary, radius = 10.dp.toPx(),
+            drawCircle(primary, radius = 8.dp.toPx(),
                 center = Offset(middle, bottom - travel * ratio))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TextButton(onClick = { onValueChange((value - if (maxValue > 2f) 1f else 0.05f).coerceAtLeast(0f)) }) {
-                Text("−")
-            }
-            TextButton(onClick = { onValueChange((value + if (maxValue > 2f) 1f else 0.05f).coerceAtMost(maxValue)) }) {
-                Text("+")
-            }
         }
     }
 }
@@ -209,7 +201,6 @@ fun PerformancePanel(
     velocity: Int,
     volume: Float,
     masterPeak: Float,
-    lastMidi: String,
     onVolume: (Float) -> Unit,
     onProjectSettings: () -> Unit,
     onMidiSettings: () -> Unit,
@@ -537,8 +528,7 @@ fun PerformancePanel(
                     KeyboardMode.MONITOR -> "▥"
                     KeyboardMode.HIDDEN -> "▧"
                 }, onKeyboardMode)
-            Text(lastMidi, modifier = Modifier.weight(1f).padding(horizontal = 5.dp),
-                fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.weight(1f))
             if (keyboardMode == KeyboardMode.MONITOR) {
                 Text("${MidiPitch.name(firstKey)}–${MidiPitch.name(lastKey)}", fontSize = 11.sp)
             } else if (keyboardMode == KeyboardMode.PLAY) {
