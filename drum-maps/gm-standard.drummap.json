@@ -1,0 +1,14 @@
+{
+  "format": "liveperformer.drum-map.v1",
+  "name": "GM Standard",
+  "notes": {
+    "bassDrum": 36,
+    "snare": 38,
+    "closedHiHat": 42,
+    "openHiHat": 46,
+    "lowTom": 45,
+    "highTom": 50,
+    "ride": 51,
+    "crash": 49
+  }
+}

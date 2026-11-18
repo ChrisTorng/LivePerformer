@@ -165,6 +165,7 @@ private fun PerformerScreen() {
     var openTrackMenu by remember { mutableStateOf<Int?>(null) }
     var deleteCandidate by remember { mutableStateOf<SoundFontItem?>(null) }
     var renameFontCandidate by remember { mutableStateOf<SoundFontItem?>(null) }
+    var drumMapTargetFontId by remember { mutableStateOf<String?>(null) }
     var renameFontValue by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
@@ -181,7 +182,7 @@ private fun PerformerScreen() {
     val midiInputRef = remember { mutableStateOf<MidiInput?>(null) }
     var baseNote by remember { mutableIntStateOf(settings.getInt("baseNote", 48).coerceIn(0, 96)) }
     var velocity by remember { mutableFloatStateOf(settings.getFloat("velocity", 100f).coerceIn(1f, 127f)) }
-    var gain by remember { mutableFloatStateOf(settings.getFloat("gain", 0.8f).coerceIn(0.1f, 1.5f)) }
+    var gain by remember { mutableFloatStateOf(settings.getFloat("gain", 0.8f).coerceIn(0f, 1.5f)) }
     var routeRevision by remember { mutableIntStateOf(0) }
     var requestedOutputId by remember { mutableIntStateOf(0) } // Device IDs are ephemeral: do not persist.
     var outputs by remember { mutableStateOf(emptyList<AudioDeviceInfo>()) }
@@ -340,6 +341,39 @@ private fun PerformerScreen() {
     val openJson = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { handleProjectSelection(it) }
+
+    val openDrumMap = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val fontId = drumMapTargetFontId
+        if (uri != null && fontId != null) scope.launch {
+            try {
+                val fileName = ImportFileTypes.displayName(context, uri)
+                require(fileName.endsWith(".drummap.json", ignoreCase = true)) {
+                    "只接受 .drummap.json 鼓組對應檔"
+                }
+                val json = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+                        val text = StringBuilder()
+                        val buffer = CharArray(2048)
+                        while (true) {
+                            val count = reader.read(buffer)
+                            if (count < 0) break
+                            require(text.length + count <= 16384) { "鼓組對應檔超過 16 KiB" }
+                            text.append(buffer, 0, count)
+                        }
+                        text.toString()
+                    } ?: error("無法讀取鼓組對應檔")
+                }
+                val name = looper.importDrumMap(fontId, json)
+                message = "已為音色庫匯入鼓組對應：$name"
+            } catch (e: Exception) {
+                message = "鼓組對應匯入失敗：${e.message}"
+            } finally {
+                drumMapTargetFontId = null
+            }
+        } else drumMapTargetFontId = null
+    }
 
     val microphonePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -1022,18 +1056,39 @@ private fun PerformerScreen() {
             }
             Text("音色庫", style = MaterialTheme.typography.titleMedium)
             fonts.forEach { font ->
-                Row(verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text(font.title, modifier = Modifier.weight(1f), maxLines = 1)
-                    if (!font.isBundled) {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(font.title, modifier = Modifier.weight(1f), maxLines = 1)
+                        if (!font.isBundled) {
+                            TextButton(onClick = {
+                                renameFontCandidate = font
+                                renameFontValue = font.title
+                            }) { Text("更名") }
+                            TextButton(onClick = { deleteCandidate = font }) { Text("刪除") }
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("鼓 Pad：${looper.drumMapName(font.id)}",
+                            modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                         TextButton(onClick = {
-                            renameFontCandidate = font
-                            renameFontValue = font.title
-                        }) { Text("更名") }
-                        TextButton(onClick = { deleteCandidate = font }) { Text("刪除") }
+                            drumMapTargetFontId = font.id
+                            openDrumMap.launch(arrayOf("application/json", "*/*"))
+                        }) { Text("匯入 Map") }
+                        if (looper.drumMapName(font.id) != DrumMap.GM.name) {
+                            TextButton(onClick = {
+                                looper.resetDrumMap(font.id)
+                                message = "已還原 ${font.title} 的 GM 鼓組對應"
+                            }) { Text("還原 GM") }
+                        }
                     }
                 }
             }
+            Text("Pad 1–8 固定：大鼓、小鼓、閉鈸、開鈸、低通鼓、高通鼓、Ride、Crash。" +
+                "內建 GM 對應；其他 SoundFont 可匯入 .drummap.json，" +
+                "每套音色庫共用於所有專案。Hi-hat 截音仍依 SoundFont 的排他群組決定。",
+                style = MaterialTheme.typography.bodySmall)
             OutlinedButton(enabled = !loading && !importing,
                 onClick = { picker.launch(arrayOf("*/*")) }) {
                 Text("從 Downloads／其他位置匯入 SF2 / SF3 / ZIP / XZ")
@@ -1067,7 +1122,7 @@ private fun PerformerScreen() {
                 gain = it
                 NativeEngine.setGain(it)
                 settings.edit().putFloat("gain", it).apply()
-            }, valueRange = 0.1f..1.5f)
+            }, valueRange = 0f..1.5f)
             Text("音訊輸出", style = MaterialTheme.typography.titleMedium)
             ExposedDropdownMenuBox(expanded = showOutputs, onExpandedChange = { showOutputs = it && !restarting }) {
                 OutlinedTextField(
