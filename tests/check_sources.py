@@ -33,7 +33,9 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.4.14' in workflow and 'versionCode = 23' in gradle
+version = re.search(r'versionName\s*=\s*"([^"]+)"', gradle).group(1)
+code = int(re.search(r'versionCode\s*=\s*(\d+)', gradle).group(1))
+assert code > 0 and f'LivePerformer-v{version}.apk' in workflow
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -205,7 +207,7 @@ assert 'fun forPreset(' in drum and 'fun reset(' in drum
 assert 'drum-pads' in routing and 'drum-pads' in looper and 'drum-pads' in routing_ui
 assert 'drumMaps.forPreset(' in looper and 'sendToSynth(track, e.type' in looper
 assert 'importDrumMap' in activity and 'openDrumMap' in activity
-assert 'LivePerformer-v0.4.14.apk' in workflow
+assert f'LivePerformer-v{version}.apk' in workflow
 assert (root/'drum-maps/gm-standard.drummap.json').exists()
 assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/DrumPadsTest.kt').exists()
 print('PASS: v0.4.9 global eight-pad drum mapping and versioned APK')
@@ -233,7 +235,8 @@ print('PASS: v0.4.11 MPK editor-sourced CC2–9 knobs, separate physical CC A/B 
 assert '"countInEnabled"' in looper and '"countInBars"' in looper
 assert 'setCountInBars' in looper and 'if (countInActive) return' in looper
 assert 'setTrackVolume' in looper and '"keyboardBase"' in looper
-assert 'VerticalLevelMeter' in panel and 'masterPeak' in panel and 'lastMidi' in panel
+assert 'VerticalLevelMeter' in panel and 'masterPeak' in panel
+assert 'lastMidi' not in panel and 'MidiSystemPanel(midiDevices, midiLogs' in activity
 assert 'configureRange(firstKey, lastKey)' in panel
 assert 'NativeEngine.outputPeak()' in activity and 'outputPeak_' in native
 assert '錄製前預備拍' in activity
@@ -259,6 +262,19 @@ assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/KeyboardOctaveRa
 for needle in ('BoxWithConstraints(', 'trackPaneFraction', 'detectHorizontalDragGestures', 'minLeft', 'maxLeft', 'VerticalGainSlider', 'height(36.dp)'):
     assert needle in panel, needle
 assert 'KeyboardOctaveRange.playBase' in activity
-assert 'VerticalGainSlider(value = gain' in activity
+assert 'Slider(value = gain' in activity and 'VerticalGainSlider(value = gain' not in activity
 assert 'drawRoundRect(center - markerHalfWidth' in keyboard
 assert 'fun floorC' in octaves and 'fun monitorBounds' in octaves
+
+# v0.4.15: immersive performance screen, compact faders and predictable input targets.
+assert 'hide(WindowInsetsCompat.Type.systemBars())' in activity
+assert 'override fun onWindowFocusChanged(hasFocus: Boolean)' in activity
+assert 'BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE' in activity
+assert 'Modifier.width(42.dp).height(172.dp)' in panel
+assert 'Text("−")' not in panel and 'Text("+")' not in panel
+assert 'lastMidi' not in activity
+focus = looper.split('fun selectTrack(id: Int)', 1)[1].split('fun addTrack(', 1)[0]
+assert 'inputTargetIds.clear()' in focus and 'inputTargetIds += id' in focus
+number_toggle = looper.split('fun toggleInputTarget(id: Int)', 1)[1].split('private fun isDrumTrack(', 1)[0]
+assert 'if (!inputTargetIds.add(id)) inputTargetIds.remove(id)' in number_toggle
+print('PASS: immersive mode, horizontal settings gain, compact stage faders and single/multi input selection')
