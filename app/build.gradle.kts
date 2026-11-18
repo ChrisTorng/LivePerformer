@@ -14,8 +14,8 @@ android {
         minSdk = 26
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode = 22
-        versionName = "0.4.13"
+        versionCode = 23
+        versionName = "0.4.14"
         ndk {
             // Normal phone builds stay arm64; x86_64 is opt-in only for Android emulator CI.
             abiFilters += listOf(

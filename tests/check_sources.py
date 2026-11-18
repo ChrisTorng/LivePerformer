@@ -33,7 +33,7 @@ assert 'lastPulseNs' in native and 'lastPulseNs' in tester
 assert 'AudioRecord' in tester and 'getTimestamp' in tester
 assert 'ZipInputStream' in importer and 'TarArchiveInputStream' in importer
 assert 'dev-signing.keystore' in workflow and 'dev-signing.keystore' in gradle
-assert 'v0.4.13' in workflow and 'versionCode = 22' in gradle
+assert 'v0.4.14' in workflow and 'versionCode = 23' in gradle
 print('PASS: displayed version, microphone measurement, ZIP/XZ import and stable signer wiring')
 
 parser=(root/'app/src/main/java/tw/idv/christorng/liveperformer/SoundFontPresets.kt').read_text()
@@ -205,7 +205,7 @@ assert 'fun forPreset(' in drum and 'fun reset(' in drum
 assert 'drum-pads' in routing and 'drum-pads' in looper and 'drum-pads' in routing_ui
 assert 'drumMaps.forPreset(' in looper and 'sendToSynth(track, e.type' in looper
 assert 'importDrumMap' in activity and 'openDrumMap' in activity
-assert 'LivePerformer-v0.4.13.apk' in workflow
+assert 'LivePerformer-v0.4.14.apk' in workflow
 assert (root/'drum-maps/gm-standard.drummap.json').exists()
 assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/DrumPadsTest.kt').exists()
 print('PASS: v0.4.9 global eight-pad drum mapping and versioned APK')
@@ -252,3 +252,13 @@ for needle in ('Tap 錄', 'itemsIndexed', 'toggleInputTarget', 'showExternalVelo
     assert needle in panel, needle
 assert 'val tapCount' in tap and 'taps.zipWithNext' in tap
 assert 'showExternalVelocities' in keyboard and 'hasActiveTouches' in keyboard
+
+# v0.4.14 stage split, whole C octaves and velocity-height marker guards.
+octaves = (root/'app/src/main/java/tw/idv/christorng/liveperformer/KeyboardOctaveRange.kt').read_text()
+assert (root/'app/src/test/java/tw/idv/christorng/liveperformer/KeyboardOctaveRangeTest.kt').exists()
+for needle in ('BoxWithConstraints(', 'trackPaneFraction', 'detectHorizontalDragGestures', 'minLeft', 'maxLeft', 'VerticalGainSlider', 'height(36.dp)'):
+    assert needle in panel, needle
+assert 'KeyboardOctaveRange.playBase' in activity
+assert 'VerticalGainSlider(value = gain' in activity
+assert 'drawRoundRect(center - markerHalfWidth' in keyboard
+assert 'fun floorC' in octaves and 'fun monitorBounds' in octaves
