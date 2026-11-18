@@ -849,11 +849,10 @@ class LoopController(context: Context) {
         tracks.filter { it.id in inputTargetIds }.forEach { dispatchToTrack(it, type, a, b) }
     }
 
-    /** A tap on the numbered drag handle toggles this track's keyboard-input membership. */
+    /** Numbered track handles toggle additional input targets without changing the focused track. */
     @Synchronized fun toggleInputTarget(id: Int) {
         if (tracks.none { it.id == id }) return
-        if (id in inputTargetIds && inputTargetIds.size > 1) inputTargetIds.remove(id)
-        else inputTargetIds.add(id)
+        if (!inputTargetIds.add(id)) inputTargetIds.remove(id)
         changed()
     }
 
@@ -1348,6 +1347,8 @@ class LoopController(context: Context) {
     @Synchronized fun selectTrack(id: Int) {
         if (tracks.any { it.id == id }) {
             selectedId = id
+            inputTargetIds.clear()
+            inputTargetIds += id
             changed()
         }
     }
