@@ -13,6 +13,8 @@ import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import android.os.Build
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -56,6 +58,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // A performer can play without touching the display for minutes at a time.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        enterImmersiveMode()
         // Android 15 enforces edge-to-edge; Compose applies the safe insets explicitly.
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
@@ -82,6 +85,18 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun enterImmersiveMode() {
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) enterImmersiveMode()
     }
 }
 
@@ -178,7 +193,6 @@ private fun PerformerScreen() {
     var midiStatus by remember { mutableStateOf("USB MIDI: scanning…") }
     var midiDevices by remember { mutableStateOf(emptyList<MidiDeviceView>()) }
     val midiLogs = remember { mutableStateMapOf<Int, List<String>>() }
-    var lastMidi by remember { mutableStateOf("尚未收到 MIDI") }
     var masterPeak by remember { mutableFloatStateOf(0f) }
     var midiClockTarget by remember { mutableStateOf<Int?>(null) }
     val midiInputRef = remember { mutableStateOf<MidiInput?>(null) }
@@ -531,12 +545,6 @@ private fun PerformerScreen() {
                 val previous = midiLogs[event.deviceId].orEmpty()
                 midiLogs[event.deviceId] =
                     (listOf(MidiDiagnostics.format(event)) + previous).take(50)
-                if (event.status < 0xf0) {
-                    val index = midiDevices.filter { it.outputPorts > 0 }
-                        .sortedBy { it.id }.indexOfFirst { it.id == event.deviceId }
-                    lastMidi = "鍵盤${if (index >= 0) index + 1 else "?"} · " +
-                        MidiDiagnostics.format(event)
-                }
             }
         })
         midiInputRef.value = input
@@ -1083,7 +1091,6 @@ private fun PerformerScreen() {
                 "亦可透過 Android Files → LivePerformer → 專案／音軌範本 存取；" +
                 "從 Downloads 匯入的檔案會複製到專用資料庫。",
                 style = MaterialTheme.typography.bodySmall)
-            Text("音軌編輯、樂器選擇及排序在演奏畫面操作。", style = MaterialTheme.typography.bodySmall)
             } else if (settingsPage == SettingsPage.MIDI) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedButton(onClick = { importMidiRoutes.launch(arrayOf("application/json", "*/*")) }) {
@@ -1106,12 +1113,12 @@ private fun PerformerScreen() {
                 velocity = it
                 settings.edit().putFloat("velocity", it).apply()
             }, valueRange = 1f..127f)
-            Text("主音量（垂直推桿）")
-            VerticalGainSlider(value = gain, onValueChange = {
+            Text("主音量：${(gain * 100).toInt()}%")
+            Slider(value = gain, onValueChange = {
                 gain = it
                 NativeEngine.setGain(it)
                 settings.edit().putFloat("gain", it).apply()
-            })
+            }, valueRange = 0f..1.5f)
             Text("音訊輸出", style = MaterialTheme.typography.titleMedium)
             ExposedDropdownMenuBox(expanded = showOutputs, onExpandedChange = { showOutputs = it && !restarting }) {
                 OutlinedTextField(
@@ -1206,15 +1213,9 @@ private fun PerformerScreen() {
             TextButton(enabled = !loading && !importing, onClick = {
                 showManagedImport = true
             }) { Text("LivePerformer 待匯入音色（依副檔名篩選）") }
-            Text("從下載中選檔不需要資料夾授權。Android Files 另外提供 LivePerformer " +
-                "專用位置：已匯入音色庫、待匯入音色、專案、音軌範本。" +
-                "待匯入資料夾可由 Files 複製檔案進去，再回 App 匯入。",
-                style = MaterialTheme.typography.bodySmall)
             Text(message, style = MaterialTheme.typography.bodySmall)
             } else {
             Text("鍵盤顯示與映射", style = MaterialTheme.typography.titleMedium)
-            Text("每軌可儲存自己的鍵盤起點；外部 MIDI 與播放中的音高會自動顯示。",
-                style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
                     baseNote = (KeyboardOctaveRange.floorC(baseNote) - 12).coerceAtLeast(0)
@@ -1252,7 +1253,7 @@ private fun PerformerScreen() {
                     looper.setKeyboardBase(loopState.selectedId, aligned)
                 },
                 velocity = velocity.toInt(), volume = gain,
-                masterPeak = masterPeak, lastMidi = lastMidi,
+                masterPeak = masterPeak,
                 onVolume = {
                     gain = it
                     NativeEngine.setGain(it)
