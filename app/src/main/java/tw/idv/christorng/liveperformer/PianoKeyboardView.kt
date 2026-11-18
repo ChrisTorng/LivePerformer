@@ -11,9 +11,9 @@ import kotlin.math.floor
 
 /** Key widths adapt to the requested pitch range; monitoring is non-interactive. */
 class PianoKeyboardView(context: Context) : View(context) {
-    var baseNote = 47
+    var baseNote = 48
         private set
-    var endNote = 71
+    var endNote = 72
         private set
     fun configureRange(start: Int, end: Int) {
         val from = start.coerceIn(0, 127)
@@ -26,6 +26,13 @@ class PianoKeyboardView(context: Context) : View(context) {
     }
     var velocity = 100
     var readOnly = false
+    val hasActiveTouches: Boolean get() = active.size() > 0
+    var showExternalVelocities: Map<Int, Int> = emptyMap()
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
     var showExternalNotes: Set<Int> = emptySet()
         set(value) {
             if (field == value) return
@@ -39,6 +46,9 @@ class PianoKeyboardView(context: Context) : View(context) {
     private val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(250, 250, 248) }
     private val black = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(30, 34, 44) }
     private val pressed = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(89, 177, 209) }
+    private val velocityPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(180, 224, 66, 66)
+    }
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(64, 67, 71); style = Paint.Style.STROKE; strokeWidth = 1.5f
     }
@@ -77,6 +87,24 @@ class PianoKeyboardView(context: Context) : View(context) {
             val x = blackX(note, whites, step)
             canvas.drawRoundRect(x - bw / 2, 0f, x + bw / 2, height * .63f,
                 6f, 6f, if (isPressed(note)) pressed else black)
+        }
+        // One horizontal height marker per held MIDI note (not a vertical bar or audio RMS).
+        // Velocity 127 places the line near the top; low velocity near the bottom.
+        showExternalVelocities.forEach { (note, rawVelocity) ->
+            if (note !in baseNote..endNote || rawVelocity <= 0) return@forEach
+            val center = if (isWhite(note)) {
+                val index = whites.indexOf(note)
+                if (index < 0) return@forEach
+                (index + .5f) * step
+            } else blackX(note, whites, step)
+            val markerHalfWidth = if (isWhite(note)) step * .42f else bw * .48f
+            val strength = rawVelocity.coerceIn(1, 127) / 127f
+            val margin = 5f * resources.displayMetrics.density
+            val y = margin + (height - 2 * margin) * (1f - strength)
+            val markerHeight = 3f * resources.displayMetrics.density
+            canvas.drawRoundRect(center - markerHalfWidth, y - markerHeight / 2f,
+                center + markerHalfWidth, y + markerHeight / 2f,
+                markerHeight / 2f, markerHeight / 2f, velocityPaint)
         }
     }
     private fun isPressed(note: Int): Boolean =

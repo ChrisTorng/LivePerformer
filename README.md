@@ -1,4 +1,4 @@
-# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.12)
+# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.14)
 
 **Status: early source prototype, not yet device-verified.** Initial target: Samsung Galaxy A25 5G, USB MIDI keyboard, wired 3.5 mm headphones. v0.2.1 adds an ergonomic single-screen interface and v0.2 includes an experimental MIDI-only loop recorder; physical device performance remains unverified.
 
@@ -181,3 +181,19 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - The strip above the keyboard always shows the most recent external MIDI event, including keyboard ordinal, MIDI channel, Note/CC and value, with no timeout. MIDI Clock and Active Sensing are excluded.
 - Default keyboard range starts at B2 for drum/bass tracks or B3 for others, with user-selected base note remembered in the project for every track. Recorded tracks suggest their lowest recorded pitch unless a manually saved keyboard base already exists. Play range spans two octaves in portrait or three in landscape; monitor range can automatically shrink keys to cover the full recorded/held pitch range, and shows actual lowest/highest MIDI notes.
 - Earlier .lvp / .lvpt JSON is readable: absent count-in and volume/base fields default safely. No device-validation claims are made; use Android CI and direct MIDI input/sound tests before relying on stage behavior.
+
+## v0.4.13 — 分頁設定、Tap Tempo、MIDI 路由 JSON 與多軌鍵盤輸入（開發分支）
+- 系統設定：映射／音訊／MIDI／音色；專案設定：專案／節拍／MIDI 路由，頂端分頁不再從長頁向下尋找設定。
+- 演奏畫面點擊 BPM 區域連續四下，三段間隔平均計算 BPM；「Tap 錄」先待命，第四拍直接錄製，不再加一次 Count-in。一般錄製保留原有 Count-in。CC 路由動作另外提供 tap-tempo、tap-record。
+- MIDI 路由使用獨立的 `liveperformer.midi-routes.v1` JSON 匯入／匯出，載入不修改專案音軌、速度或音符；進入 MIDI 路由分頁操作。Akai MPK mini MKII 既有音符／Pad／CC／Knob 路由保留。
+- 每個音軌左邊數字可按選取多個鍵盤輸入目的軌，長按拖曳可排序。觸控鍵盤與一般鍵盤輸入廣播至選取的音軌並在錄製時分軌量化儲存；固定鼓 Pad／Bass Pad 仍走各自路由。
+- 鍵盤以直條呈現每一個目前按住的 MIDI NoteOn Velocity，而非 PCM 音量；縮窄各軌音量表、縮短琴鍵高度、擴大 Piano Roll。
+- 仍須完成 Android CI 與 Galaxy A25 5G、MPK mini MKII 的手動實機測試；目前不能宣稱硬體確認。
+
+## v0.4.14 — 主畫面可拖曳分隔線、力度水平線、完整 C 八度
+- 音軌控制欄預設約半個螢幕寬，至少 142dp 且保留至少 90dp Piano Roll；可在垂直分隔線左右拖曳並儲存比例，分隔線延伸至新增音軌與下方空白處，不影響獨立的白色播放位置線。
+- 修正音軌名稱被 M/S 及窄音量表壓到只剩省略號，縮短新增音軌列，對齊 BPM／TAP 與 Tap 錄製控制。
+- 主音量與音軌 CC7 音量採用向上增加的垂直推桿；窄音量活動顯示保留。
+- 鍵盤每個 MIDI NoteOn 的 Velocity 改為水平方向短線，線在琴鍵中的垂直高度代表力度，多音符各自標示，並非輸出音量。
+- 鼓／Bass 無錄製預設 C2，其他樂器預設 C3；起點與錄製音域以 C 為八度邊界，PLAY 維持 C 到 C 兩個完整八度，MONITOR 依內容涵蓋完整音域。
+- 此版使用既有公開開發測試簽章；CI 通過不等於已經在 Galaxy A25 5G 實機驗證。

@@ -9,3 +9,5 @@
 - Never describe an APK as device-verified without actual device tests.
 
 - The development signing key is publicly recoverable from the dedicated GitHub prerelease and is ONLY for disposable development builds. Do not treat it as a secret or use it to sign production builds. Future production builds must use a private keystore in repository secrets.
+
+- Finished LivePerformer PRs must be CI-verified and merged into main in dependency order, not left open; use direct main changes when appropriate. Do not skip checks or overwrite features stacked on older branches.
