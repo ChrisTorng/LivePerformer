@@ -1,4 +1,4 @@
-# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.11)
+# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.12)
 
 **Status: early source prototype, not yet device-verified.** Initial target: Samsung Galaxy A25 5G, USB MIDI keyboard, wired 3.5 mm headphones. v0.2.1 adds an ergonomic single-screen interface and v0.2 includes an experimental MIDI-only loop recorder; physical device performance remains unverified.
 
@@ -173,3 +173,11 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - Position-based routes follow the current track order. Missing tracks do nothing; new tracks instantly become addressable when inserted at a matching position. The global master knob works even if no track exists.
 - **Joystick verified against Akai official Editor manual (p.12):** X Axis Pitchbend sends 14-bit pitch bend to the selected instrument (nominal default ±2 semitones unless the SF2/RPN bend range differs). Y Axis **"CC 2" means *Dual CC mode*, not controller #2**: UP=CC1 (modulation/vibrato depending on SoundFont), DOWN=CC11 (expression). Both operate on Keybed/Controls Ch1 and pass through to the selected track. These do **not** collide with Knobs CC2–9. The app does not remap those joystick assignments.
 - **Potential future Momentary CC actions:** next/previous track, fill drum, tap tempo, one-shot sample, and clear-with-confirmation. Do not put one-shot actions into an on/off switch by default.
+
+## v0.4.12 — Count-in, compact MIDI meters and adaptive keyboard
+
+- Project settings now include a count-in switch (enabled by default) and one/two-bar count-in (one bar by default). Count-in applies to recording from stopped transport; it respects time signature and uses metronome clicks even if the general metronome is off. Playback starts after count-in, whereas recording in a currently playing loop arms at the next loop boundary without another count-in.
+- Each track has a persisted MIDI CC7 volume (0–127) with a narrow meter next to Mute/Solo. The meter fill shows configured volume; a transient dot is **MIDI-note activity estimated from velocity**, not isolated PCM loudness. Muted tracks retain a grey activity indicator. The master meter's dot samples real post-mix audio output peak, with the fill showing configured gain. Both are display hints, not calibrated dB meters.
+- The strip above the keyboard always shows the most recent external MIDI event, including keyboard ordinal, MIDI channel, Note/CC and value, with no timeout. MIDI Clock and Active Sensing are excluded.
+- Default keyboard range starts at B2 for drum/bass tracks or B3 for others, with user-selected base note remembered in the project for every track. Recorded tracks suggest their lowest recorded pitch unless a manually saved keyboard base already exists. Play range spans two octaves in portrait or three in landscape; monitor range can automatically shrink keys to cover the full recorded/held pitch range, and shows actual lowest/highest MIDI notes.
+- Earlier .lvp / .lvpt JSON is readable: absent count-in and volume/base fields default safely. No device-validation claims are made; use Android CI and direct MIDI input/sound tests before relying on stage behavior.

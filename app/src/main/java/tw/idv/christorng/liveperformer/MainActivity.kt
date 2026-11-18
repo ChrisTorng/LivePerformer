@@ -178,9 +178,11 @@ private fun PerformerScreen() {
     var midiStatus by remember { mutableStateOf("USB MIDI: scanning…") }
     var midiDevices by remember { mutableStateOf(emptyList<MidiDeviceView>()) }
     val midiLogs = remember { mutableStateMapOf<Int, List<String>>() }
+    var lastMidi by remember { mutableStateOf("尚未收到 MIDI") }
+    var masterPeak by remember { mutableFloatStateOf(0f) }
     var midiClockTarget by remember { mutableStateOf<Int?>(null) }
     val midiInputRef = remember { mutableStateOf<MidiInput?>(null) }
-    var baseNote by remember { mutableIntStateOf(settings.getInt("baseNote", 48).coerceIn(0, 96)) }
+    var baseNote by remember { mutableIntStateOf(settings.getInt("baseNote", 47).coerceIn(0, 127)) }
     var velocity by remember { mutableFloatStateOf(settings.getFloat("velocity", 100f).coerceIn(1f, 127f)) }
     var gain by remember { mutableFloatStateOf(settings.getFloat("gain", 0.8f).coerceIn(0f, 1.5f)) }
     var routeRevision by remember { mutableIntStateOf(0) }
@@ -496,6 +498,12 @@ private fun PerformerScreen() {
                 val previous = midiLogs[event.deviceId].orEmpty()
                 midiLogs[event.deviceId] =
                     (listOf(MidiDiagnostics.format(event)) + previous).take(50)
+                if (event.status < 0xf0) {
+                    val index = midiDevices.filter { it.outputPorts > 0 }
+                        .sortedBy { it.id }.indexOfFirst { it.id == event.deviceId }
+                    lastMidi = "鍵盤${if (index >= 0) index + 1 else "?"} · " +
+                        MidiDiagnostics.format(event)
+                }
             }
         })
         midiInputRef.value = input
@@ -527,6 +535,14 @@ private fun PerformerScreen() {
     }
     LaunchedEffect(Unit) {
         while (isActive) {
+            delay(75)
+            // Actual post-mix PCM peak, smoothed on the UI thread only.
+            val newPeak = NativeEngine.outputPeak().coerceIn(0f, 1f)
+            masterPeak = maxOf(newPeak, masterPeak * 0.83f)
+        }
+    }
+    LaunchedEffect(Unit) {
+        while (isActive) {
             delay(500)
             audioStatus = NativeEngine.status()
             if (NativeEngine.consumeReconnectRequest() && !restarting) routeRevision++
@@ -539,15 +555,24 @@ private fun PerformerScreen() {
             reconnectAudio()
         }
     }
-    LaunchedEffect(loopState.keyboardNotes, keyboardMode) {
-        if (keyboardMode == KeyboardMode.MONITOR && loopState.keyboardNotes.isNotEmpty()) {
-            val pressed = loopState.keyboardNotes.minOrNull() ?: baseNote
-            if (pressed < baseNote || pressed > baseNote + 24) {
-                baseNote = ((pressed / 12) * 12 - 12).coerceIn(0, 96)
-            }
+    val selectedTrack = loopState.tracks.firstOrNull { it.id == loopState.selectedId }
+    val selectedPitchRange = selectedTrack?.pitchRange
+    // Re-evaluate on instrument changes and after a take, but never shift keys mid-recording.
+    LaunchedEffect(loopState.selectedId, selectedTrack?.keyboardBase,
+        selectedTrack?.name, selectedTrack?.category,
+        if (!loopState.recording && !loopState.armed) selectedPitchRange else null) {
+        val track = selectedTrack
+        if (track != null) {
+            val bassOrDrums = track.channel == 9 ||
+                track.name.contains("Bass", ignoreCase = true) ||
+                track.category.contains("Bass", ignoreCase = true) ||
+                track.category.contains("貝斯") || track.name.contains("貝斯")
+            val suggested = track.keyboardBase.takeIf { it >= 0 }
+                ?: track.pitchRange?.first ?: if (bassOrDrums) 47 else 59
+            baseNote = suggested.coerceIn(0, 103)
         }
     }
-    val selectedTrack = loopState.tracks.firstOrNull { it.id == loopState.selectedId }
+
     val selectedFont = fonts.firstOrNull { it.id == selectedTrack?.fontId }
     val selectedPreset = selectedTrack?.let { track ->
         presets.firstOrNull { it.bank == track.bank && it.program == track.program }
@@ -946,6 +971,24 @@ private fun PerformerScreen() {
                 Text("節拍器")
                 Switch(checked = loopState.metronome, onCheckedChange = looper::setMetronome)
             }
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("錄製前預備拍（Count-in）")
+                    Switch(checked = loopState.countInEnabled,
+                        onCheckedChange = looper::setCountInEnabled)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    listOf(1, 2).forEach { count ->
+                        FilterChip(selected = loopState.countInBars == count,
+                            enabled = loopState.countInEnabled,
+                            onClick = { looper.setCountInBars(count) },
+                            label = { Text("${count} 小節") })
+                    }
+                }
+            }
+            Text("從停止狀態開始錄製時先打預備拍；播放及循環中的下一輪錄製不重複預備拍。",
+                style = MaterialTheme.typography.bodySmall)
             HorizontalDivider()
             Text("專案", style = MaterialTheme.typography.titleMedium)
             FlowRow(Modifier.fillMaxWidth(),
@@ -1104,13 +1147,13 @@ private fun PerformerScreen() {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
                     baseNote = (baseNote - 12).coerceAtLeast(0)
-                    settings.edit().putInt("baseNote", baseNote).apply()
+                    looper.setKeyboardBase(loopState.selectedId, baseNote)
                 }) { Text("− 八度") }
                 OutlinedButton(onClick = {
-                    baseNote = (baseNote + 12).coerceAtMost(96)
-                    settings.edit().putInt("baseNote", baseNote).apply()
+                    baseNote = (baseNote + 12).coerceAtMost(103)
+                    looper.setKeyboardBase(loopState.selectedId, baseNote)
                 }) { Text("+ 八度") }
-                Text("C${baseNote / 12 - 1}", modifier = Modifier.padding(top = 13.dp))
+                Text(MidiPitch.name(baseNote), modifier = Modifier.padding(top = 13.dp))
             }
             Text("觸控力度：${velocity.toInt()}")
             Slider(value = velocity, onValueChange = {
@@ -1172,9 +1215,10 @@ private fun PerformerScreen() {
                 baseNote = baseNote,
                 onBaseNote = {
                     baseNote = it
-                    settings.edit().putInt("baseNote", it).apply()
+                    looper.setKeyboardBase(loopState.selectedId, it)
                 },
                 velocity = velocity.toInt(), volume = gain,
+                masterPeak = masterPeak, lastMidi = lastMidi,
                 onVolume = {
                     gain = it
                     NativeEngine.setGain(it)

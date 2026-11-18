@@ -104,6 +104,7 @@ class Engine final : public oboe::AudioStreamDataCallback, public oboe::AudioStr
     std::atomic<bool> running_{false};
     std::atomic<bool> reconnectRequested_{false};
     std::atomic<float> gain_{0.8f};
+    std::atomic<float> outputPeak_{0.f};
     // Packed (fontIndex:8, bank:14, program:7). Sent in program-change events.
     std::array<std::atomic<uint32_t>, 16> channelPresets_{};
     float lastAppliedGain_{-1.0f}; // Audio callback only.
@@ -156,6 +157,7 @@ public:
         active_ = nullptr;
         lastAppliedGain_ = -1.0f;
     }
+    float outputPeak() noexcept { return outputPeak_.exchange(0.f, std::memory_order_relaxed); }
     void setGain(float gain) noexcept {
         if (std::isfinite(gain)) gain_.store(std::clamp(gain, 0.0f, 1.5f), std::memory_order_release);
     }
@@ -315,6 +317,13 @@ public:
             output[2*i+1] += signal;
         }
         testSamples_.store(remaining, std::memory_order_relaxed);
+        float peak = 0.f;
+        for (int i = 0; i < frames * 2; ++i) peak = std::max(peak, std::abs(output[i]));
+        // Hold the largest callback peak until the UI polls (~75ms), so drum
+        // transients are not missed by sampling just one callback.
+        float prior = outputPeak_.load(std::memory_order_relaxed);
+        while (peak > prior && !outputPeak_.compare_exchange_weak(
+            prior, peak, std::memory_order_relaxed)) {}
         return oboe::DataCallbackResult::Continue;
     }
 };
@@ -330,6 +339,9 @@ JNIEXPORT jboolean JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_res
 }
 JNIEXPORT jboolean JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_consumeReconnectRequest(JNIEnv*, jobject) {
     return engine().consumeReconnectRequest();
+}
+JNIEXPORT jfloat JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_outputPeak(JNIEnv*, jobject) {
+    return engine().outputPeak();
 }
 JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_setGain(JNIEnv*, jobject, jfloat gain) {
     engine().setGain(gain);
