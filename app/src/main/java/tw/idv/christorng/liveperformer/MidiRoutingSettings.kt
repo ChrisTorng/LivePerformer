@@ -83,7 +83,7 @@ fun MidiRoutingSettings(
     }
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("主鍵盤仍彈奏選取音軌；Pad 和 CC 可鎖定至其他音軌。",
+        Text("主鍵盤只彈奏非 Pad 專用的已選輸入音軌；Pad 可獨立錄製。",
             style = MaterialTheme.typography.bodySmall)
         Text("Note Bank A：固定八鼓；Note Bank B：Bass 八個音階音。實機確認 CC Toggle 不干擾 Note 發音。",
             style = MaterialTheme.typography.bodySmall)
@@ -348,7 +348,8 @@ fun MidiRoutingSettings(
         if (feedback.isNotBlank()) Text(feedback, style = MaterialTheme.typography.bodySmall)
         Text("CC Bank A 硬體 Momentary → 軟體切換，CC Bank B 硬體 Toggle → 依 127／0 設定開關。" +
             "Note A/B 不做額外按鍵鎖定。搖桿 Y AXIS 的「CC 2」代表雙 CC 模式，" +
-            "向上送 CC1、向下送 CC11，不會與 Knob K1 的 CC2 衝突。",
+            "向上送 CC1、向下送 CC11；CC11 回中值 0 會使標準表情音量歸零，" +
+            "因此預設會保持表情音量 127，只有明確自訂 CC11 路由才會依其設定執行。",
             style = MaterialTheme.typography.bodySmall)
         HorizontalDivider()
         Text("已儲存的 MIDI 路由：" + state.midiRoutes.size,
