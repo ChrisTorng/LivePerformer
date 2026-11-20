@@ -97,7 +97,7 @@ fun MidiRoutingSettings(
             "播放、錄製、節拍器與前五軌 Solo。" +
             " CC Bank B（28–35）：硬體 Toggle，127 開／0 關；" +
             "第 1–7 軌 Mute 與全部靜音。功能仍可逐條修改。\n" +
-            "Knob K1–K6：前六軌音量，K7：節拍器音量，K8：主音量。",
+            "Knob K1–K6：前六軌音量，K7：節拍器開關（CC ≥64 開），K8：主音量。",
             style = MaterialTheme.typography.bodySmall)
         Text("Knob MIDI CC 起點（連續音量，Keybed/Controls Channel 1）",
             style = MaterialTheme.typography.labelLarge)
@@ -126,7 +126,7 @@ fun MidiRoutingSettings(
                     TextButton(onClick = {
                         confirmControlsPreset = false
                         feedback = if (looper.applyMpkMiniMk2ControlsPreset(deviceKey, knobFirstCc))
-                            "已安裝 CC A/B 控制；K7 節拍器、K8 主音量"
+                            "已安裝 CC A/B 控制；K7 節拍器開關、K8 主音量"
                         else "MIDI 路由容量不足，無法套用預設"
                         onMessage(feedback)
                     }) { Text("取代舊 CC 設定") }
@@ -191,16 +191,14 @@ fun MidiRoutingSettings(
                 "scale" to "CC → 調性音階", "custom" to "CC → 逐鍵指定",
                 "drum-pads" to "8 Pad 固定鼓聲功能",
                 "volume" to "指定音軌音量", "pan" to "左右平衡", "master" to "主音量（K8）",
-                "metronome-volume" to "節拍器音量（K7）",
                 "slot-volume" to "依音軌位置調整音量（Knob）",
                 "mute" to "指定軌 Mute", "solo" to "指定軌 Solo",
                 "slot-mute" to "第 1–7 軌 Mute",
                 "slot-solo" to "第 1–7 軌 Solo",
                 "mute-all" to "全部音軌 Mute",
                 "play-stop" to "播放／停止",
-                "record-toggle" to "錄製／結束",
-                "tap-tempo" to "Tap Tempo（四拍測速）",
-                "tap-record" to "Tap 錄製（第四拍啟錄）",
+                "record-toggle" to "待錄／結束",
+                "tap-tempo" to "Tap Tempo（第四拍啟動已待錄的錄製）",
                 "metronome-toggle" to "節拍器開關",
                 "next-track" to "選取下一軌（Momentary）")
             else -> listOf("note" to "原始／半音音高",
@@ -211,7 +209,7 @@ fun MidiRoutingSettings(
             actions, { selected ->
                 action = selected
                 if (selected in setOf("play-stop", "record-toggle",
-                        "tap-tempo", "tap-record", "metronome-toggle", "next-track", "master", "metronome-volume", "mute-all",
+                        "tap-tempo", "metronome-toggle", "next-track", "master", "mute-all",
                         "slot-volume", "slot-mute", "slot-solo")) targetTrack = 0
                 else if (targetTrack == 0) targetTrack =
                     state.selectedId.takeIf { it != 0 } ?: state.tracks.firstOrNull()?.id ?: 0
