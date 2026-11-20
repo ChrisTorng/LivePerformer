@@ -80,6 +80,27 @@ class MidiRoutingTest {
         assertEquals(false, physicalLatch.targetState(up, true))
     }
 
+    @Test fun threeArmedTracksDoNotAllReceiveKeyboardNotes() {
+        val routes = listOf(
+            MidiRoute(1, "mpk", 1, "note", 36, 43, 1, "drum-pads"),
+            MidiRoute(2, "mpk", 1, "note", 44, 51, 2, "scale", 36)
+        )
+        val allArmed = setOf(1, 2, 3)
+        assertEquals(setOf(3), InputRoutingPolicy.keyboardDestinations(
+            allArmed, routes, true, 1, 2))
+        assertEquals(setOf(3), InputRoutingPolicy.keyboardDestinations(
+            allArmed, routes, false, null, null))
+        assertEquals(allArmed, InputRoutingPolicy.keyboardDestinations(
+            allArmed, emptyList(), false, null, null))
+    }
+
+    @Test fun mpkFallbackPadTracksAlsoStayOutOfKeybedInput() {
+        assertEquals(setOf(3), InputRoutingPolicy.keyboardDestinations(
+            setOf(1, 2, 3), emptyList(), true, 1, 2))
+        assertEquals(setOf(1, 2, 3), InputRoutingPolicy.keyboardDestinations(
+            setOf(1, 2, 3), emptyList(), false, 1, 2))
+    }
+
     @Test fun previousMuteModeStillInterprets127And0AsAbsoluteState() {
         val old = MidiRoute(21, "mpk", 1, "cc", 28, 28, 1, "mute")
         assertEquals(true, old.targetState(message(0xb1, 28, 127), false))
