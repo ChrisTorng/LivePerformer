@@ -231,6 +231,7 @@ class LoopController(context: Context) {
         keysDown.clear()
         keyVelocities.clear()
         NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
+        liveInputOwners.clear()
         bpm = 120
         bars = 2
         beatsPerBar = 4
@@ -278,6 +279,7 @@ class LoopController(context: Context) {
         keyVelocities.clear()
         countInActive = false
         NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
+        liveInputOwners.clear()
         absoluteTick = 0.0
         lastScheduled = -0.01
         clockNs = System.nanoTime()
@@ -360,6 +362,7 @@ class LoopController(context: Context) {
             takeHasNotes = false
             keysDown.clear()
             keyVelocities.clear()
+            liveInputOwners.clear()
             absoluteTick = 0.0
             lastScheduled = -0.01
             clockNs = System.nanoTime()
@@ -797,6 +800,7 @@ class LoopController(context: Context) {
             playing = false
             countInActive = false
             NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
+            liveInputOwners.clear()
             keysDown.clear()
             keyVelocities.clear()
             resetActivity()
@@ -851,9 +855,7 @@ class LoopController(context: Context) {
         val t = tracks.firstOrNull { it.id == id } ?: return
         if (t.id in recordingTargets || t.id in armedTargets) stopRecord(absoluteTick)
         t.events.clear()
-        t.heldVelocities.clear()
-        t.activityLevel = 0f
-        NativeEngine.midi(NativeEngine.CONTROLLER, t.channel, 123, 0)
+        releaseLiveTrack(t.id)
         changed()
     }
 
@@ -1454,9 +1456,11 @@ class LoopController(context: Context) {
         val id = nextId++
         tracks += Track(id, channel, if (drums) "鼓組 $id" else "樂器 $id",
             if (drums) 128 else 0, 0)
+        val previous = inputTargetIds.toSet()
         selectedId = id
         inputTargetIds.clear()
         inputTargetIds += id
+        releaseDepartedInputs(previous, inputTargetIds)
         tracks.last().category = if (drums) "鼓組" else "鋼琴"
         if (!drums) NativeEngine.selectFontPreset(channel, 0, 0, 0)
         changed()
@@ -1477,9 +1481,11 @@ class LoopController(context: Context) {
             fontId = fontId.takeIf { it in fontIndexes } ?: "gm",
             category = category)
         tracks += track
+        val previous = inputTargetIds.toSet()
         selectedId = id
         inputTargetIds.clear()
         inputTargetIds += id
+        releaseDepartedInputs(previous, inputTargetIds)
         NativeEngine.selectFontPreset(channel, fontIndexes[track.fontId] ?: 0, track.bank, track.program)
         changed()
         return true
@@ -1506,18 +1512,14 @@ class LoopController(context: Context) {
     private fun silenceInaudibleTracks() {
         val anySolo = tracks.any { it.solo }
         tracks.filter { it.muted || (anySolo && !it.solo) }.forEach {
-            NativeEngine.midi(NativeEngine.CONTROLLER, it.channel, 123, 0)
-            keysDown.remove(it.channel)
-            keyVelocities.remove(it.channel)
+            releaseLiveTrack(it.id)
         }
     }
 
     @Synchronized fun removeTrack(id: Int) {
         val track = tracks.firstOrNull { it.id == id } ?: return
         if (id in recordingTargets || id in armedTargets) stopRecord(absoluteTick)
-        NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 123, 0)
-        keysDown.remove(track.channel)
-        keyVelocities.remove(track.channel)
+        releaseLiveTrack(track.id)
         tracks.remove(track)
         midiRoutes.removeAll { it.trackId == id }
         silenceInaudibleTracks()
@@ -1553,6 +1555,7 @@ class LoopController(context: Context) {
     }
     @Synchronized fun setPreset(bank: Int, program: Int) {
         val track = tracks.firstOrNull { it.id == selectedId } ?: return
+        releaseLiveTrack(track.id)
         track.bank = bank
         track.program = program
         if (track.fontId == "gm" && track.channel != 9) {
@@ -1574,6 +1577,7 @@ class LoopController(context: Context) {
     ) {
         val track = tracks.firstOrNull { it.id == selectedId } ?: return
         if (fontId !in fontIndexes) return
+        releaseLiveTrack(track.id)
         track.fontId = fontId
         track.bank = bank
         track.program = program.coerceIn(0, 127)
@@ -1598,13 +1602,17 @@ class LoopController(context: Context) {
     @Synchronized fun setFont(fontId: String) {
         val t = tracks.firstOrNull { it.id == selectedId } ?: return
         if (!fontIndexes.containsKey(fontId)) return
+        releaseLiveTrack(t.id)
         t.fontId = fontId
         recoverInstrumentName(t)
         NativeEngine.selectFontPreset(t.channel, fontIndexes[fontId] ?: 0, t.bank, t.program)
         changed()
     }
     @Synchronized fun replaceFont(oldId: String, replacementId: String = "gm") {
-        tracks.filter { it.fontId == oldId }.forEach { it.fontId = replacementId }
+        tracks.filter { it.fontId == oldId }.forEach {
+            releaseLiveTrack(it.id)
+            it.fontId = replacementId
+        }
         refreshPrograms()
         changed()
     }
