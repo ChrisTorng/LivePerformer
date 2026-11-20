@@ -103,7 +103,7 @@ class LoopController(context: Context) {
     private var armedTargets: Set<Int> = emptySet()
     private var recordingTargets: Set<Int> = emptySet()
     private val tapTracker = TapTempoTracker()
-    private var tapRecordArmed = false
+    private var lastTapMillis = 0L
     private var nextMidiRouteId = 1
     @Volatile private var clockSender: ((Int) -> Unit)? = null
     @Volatile var masterVolumeFromMidi: ((Float) -> Unit)? = null
@@ -428,10 +428,10 @@ class LoopController(context: Context) {
             val ch = item.optInt("channel", -1)
             val trackId = item.optInt("trackId")
             val source = item.optString("deviceKey", "*")
-            val action = if (originalAction == "slot-volume" && kind == "cc" &&
+            val action = if (originalAction == "metronome-volume") "metronome-toggle" else if (originalAction == "slot-volume" && kind == "cc" &&
                 ch == 0 && trackId == 0 && item.optInt("noteBase", -1) == 6 &&
                 first == last && first == defaultKnobFirstCc(source) + 6)
-                "metronome-volume" else originalAction
+                "metronome-toggle" else originalAction
             require(kind in setOf("note", "cc", "program") &&
                 action in knownActions && first in 0..127 && last in first..127 &&
                 ch in -1..15 && item.optString("deviceKey", "*").length <= 256) {
@@ -443,7 +443,9 @@ class LoopController(context: Context) {
                 mapArray.length() == last - first + 1)) { "自訂 MIDI 音符映射長度不符" }
             val map = (0 until mapArray.length()).map { mapArray.getInt(it) }
             require(map.all { it in -1..127 }) { "自訂 MIDI 音高無效" }
-            val ccMode = item.optString("ccMode", "legacy")
+            val ccMode = if (action == "metronome-toggle" &&
+                originalAction != "metronome-toggle") "absolute"
+                else item.optString("ccMode", "legacy")
             require(ccMode in MidiRoute.ccModes) { "CC 觸發模式無效" }
             if (action in setOf("slot-volume", "slot-mute", "slot-solo"))
                 require(kind == "cc" && item.optInt("noteBase", -1) in 0..6 && trackId == 0) {
@@ -603,7 +605,7 @@ class LoopController(context: Context) {
                     }, pianoNotes(it, length), it.activityLevel, it.keyboardBase,
                     if (recorded.isEmpty()) null else recorded.minOf { e -> e.note }..recorded.maxOf { e -> e.note })
             }, midiRoutes.toList(), countInEnabled, countInBars, countLeft,
-            tapTracker.tapCount, tapRecordArmed)
+            tapTracker.tapCount, false)
     }
 
     private fun publish() {
@@ -650,8 +652,8 @@ class LoopController(context: Context) {
         else events.add(event)
     }
 
-    /** Commit note takes only on NoteOn; CC11-only takes preserve prior notes. */
-    private fun stopRecord(at: Double) {
+    /** Finalize a loop pass without disarming; silent passes preserve the old notes. */
+    private fun finishRecordingPass(at: Double) {
         for (track in tracks.filter { it.id in recordingTargets && it.id in takeHasNotesByTrack }) {
             val heldForTrack = heldRecordingNotesByTrack[track.id].orEmpty()
             val length = LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
@@ -691,6 +693,15 @@ class LoopController(context: Context) {
         pendingExpressionByTrack.clear()
         preRollEvents.clear()
         takeHasNotes = false
+    }
+
+    private fun stopRecord(at: Double) {
+        if (recordingTrack != null) finishRecordingPass(at)
+        heldRecordingNotes.clear()
+        heldRecordingNotesByTrack.clear()
+        takeHasNotesByTrack.clear()
+        pendingExpressionByTrack.clear()
+        preRollEvents.clear()
         recordingTrack = null
         armedTrack = null
         armedTargets = emptySet()
@@ -706,6 +717,14 @@ class LoopController(context: Context) {
         val length = LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
         if (type == NativeEngine.NOTE_ON && velocity > 0 && track.id !in takeHasNotesByTrack) {
             // Replace, never overdub. Keep the previous recording through an empty pass.
+            if (track.events.isNotEmpty()) {
+                // Punch-in must silence the old take immediately, before this NoteOn.
+                NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 64, 0)
+                NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 120, 0)
+                keysDown.remove(track.channel)
+                keyVelocities.remove(track.channel)
+                track.heldVelocities.clear()
+            }
             track.events.clear()
             // An old expression curve might have left this synth channel quiet.
             // Reset only when no new live CC11 gesture has been captured.
@@ -784,8 +803,15 @@ class LoopController(context: Context) {
             }
             preRollEvents.clear()
         }
-        if (recordingTrack != null && absoluteTick >= recordStart + LoopMath.loopTicks(bars, beatsPerBar, beatUnit))
-            stopRecord(recordStart + LoopMath.loopTicks(bars, beatsPerBar, beatUnit) - 1)
+        // Finalize at every boundary but stay in Record. The next pass only
+        // replaces existing content when its first new NoteOn arrives.
+        if (recordingTrack != null) {
+            val length = LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
+            while (absoluteTick >= recordStart + length) {
+                finishRecordingPass(recordStart + length - 1)
+                recordStart += length
+            }
+        }
     }
 
     @Synchronized private fun tick() {
@@ -841,13 +867,9 @@ class LoopController(context: Context) {
         val firstBeat = (floor(from / beat) + 1) * beat
         if (firstBeat <= to) {
             val index = (firstBeat / beat).toLong()
-            val clickVelocity = (82 * metronomeVolume / 100f).toInt().coerceIn(0, 127)
-            if (clickVelocity > 0) NativeEngine.noteOn(
-                if (index % beatsPerBar == 0L) 76 else 77, clickVelocity, 9)
+            NativeEngine.midi(NativeEngine.METRONOME_CLICK, 0,
+                if (index % beatsPerBar == 0L) 1 else 0, 0)
         }
-        val off = (floor((from - 96) / beat) + 1) * beat + 96
-        if (off <= to) NativeEngine.noteOff(
-            if ((off / beat).toLong() % beatsPerBar == 0L) 76 else 77, 9)
     }
 
     /** Transport has Play/Stop semantics, never resume-from-middle. */
@@ -870,7 +892,10 @@ class LoopController(context: Context) {
             resetActivity()
         } else {
             playing = true
-            clockSender?.invoke(0xfa)
+            countInActive = armedTrack != null && countInEnabled
+            countInProgress = 0.0
+            lastCountInScheduled = -0.01
+            if (!countInActive) clockSender?.invoke(0xfa)
         }
         lastClockIndex = -1L
         absoluteTick = 0.0
@@ -882,8 +907,10 @@ class LoopController(context: Context) {
 
     @Synchronized fun playPause() = playStop()
 
+    /** Arm is non-destructive and does not start transport by itself. */
     @Synchronized fun recordPause() {
-        if (armedTrack == null && recordingTrack == null && tracks.none { it.id == selectedId }) return
+        if (armedTrack == null && recordingTrack == null &&
+            tracks.none { it.id in inputTargetIds }) return
         advance(System.nanoTime())
         if (recordingTrack != null || armedTrack != null) {
             stopRecord(absoluteTick)
@@ -895,22 +922,11 @@ class LoopController(context: Context) {
         heldRecordingNotesByTrack.clear()
         takeHasNotesByTrack.clear()
         pendingExpressionByTrack.clear()
-        if (!playing) {
-            absoluteTick = 0.0
-            lastScheduled = -0.01
-            playing = true
-            lastClockIndex = -1L
-            countInActive = countInEnabled
-            countInProgress = 0.0
-            lastCountInScheduled = -0.01
-            if (!countInActive) clockSender?.invoke(0xfa)
-            clockNs = System.nanoTime()
-            armedAt = 0.0
-        } else armedAt = LoopMath.nextBoundary(absoluteTick,
-            LoopMath.loopTicks(bars, beatsPerBar, beatUnit))
+        armedAt = if (playing) LoopMath.nextBoundary(absoluteTick,
+            LoopMath.loopTicks(bars, beatsPerBar, beatUnit)) else 0.0
         armedTargets = inputTargetIds.filterTo(linkedSetOf()) { id -> tracks.any { it.id == id } }
         armedTrack = armedTargets.firstOrNull()
-        updateRecording()
+        if (playing) updateRecording()
         publish()
     }
 
@@ -1086,16 +1102,17 @@ class LoopController(context: Context) {
         if (event.channel == 0 && number in firstKnob..(firstKnob + 7)) {
             val hasEditedKnobs = midiRoutes.any {
                 sameDevice(it) && it.kind == "cc" && it.channel in setOf(-1, 0) &&
-                    it.action in setOf("slot-volume", "metronome-volume", "master")
+                    it.action in setOf("slot-volume", "metronome-volume", "metronome-toggle", "master")
             }
             if (hasEditedKnobs) return null
             val slot = number - firstKnob
             return MidiRoute(-1, event.deviceKey, 0, "cc", number, number, 0,
                 when (slot) {
                     in 0..5 -> "slot-volume"
-                    6 -> "metronome-volume"
+                    6 -> "metronome-toggle"
                     else -> "master"
-                }, if (slot < 6) slot else -1)
+                }, if (slot < 6) slot else -1,
+                ccMode = if (slot == 6) "absolute" else "legacy")
         }
         return null
     }
@@ -1143,7 +1160,7 @@ class LoopController(context: Context) {
                             else setTrackVolume(target.id, event.data2)
                         }
                     }
-                    "metronome-volume" -> setMetronomeVolume(event.data2)
+                    "metronome-volume" -> setMetronome(event.data2 >= 64)
                     "master" -> masterVolumeFromMidi?.invoke(
                         event.data2.coerceIn(0, 127) / 127f * 1.5f)
                     "mute", "slot-mute" -> {
@@ -1171,11 +1188,8 @@ class LoopController(context: Context) {
                         recordingTrack != null || armedTrack != null)?.let { target ->
                         if (target != (recordingTrack != null || armedTrack != null)) recordPause()
                     }
-                    "tap-tempo", "tap-record" -> if (event.kind == 0xb0 && event.data2 >= 64) {
-                        if (route.action == "tap-record" && tapTracker.tapCount == 0)
-                            tapRecordArmed = true
+                    "tap-tempo", "tap-record" -> if (event.kind == 0xb0 && event.data2 >= 64)
                         tapTempo()
-                    }
                     "metronome-toggle" -> route.targetState(event, metronome)?.let {
                         if (it != metronome) setMetronome(it)
                     }
@@ -1402,7 +1416,8 @@ class LoopController(context: Context) {
             proposed += MidiRoute(next++, deviceKey, 0, "cc",
                 firstKnobCc + slot, firstKnobCc + slot, 0, "slot-volume", slot)
         proposed += MidiRoute(next++, deviceKey, 0, "cc",
-            firstKnobCc + 6, firstKnobCc + 6, 0, "metronome-volume")
+            firstKnobCc + 6, firstKnobCc + 6, 0, "metronome-toggle",
+            ccMode = "absolute")
         proposed += MidiRoute(next++, deviceKey, 0, "cc",
             firstKnobCc + 7, firstKnobCc + 7, 0, "master")
         if (remainder.size + proposed.size > 48) return false
@@ -1422,34 +1437,30 @@ class LoopController(context: Context) {
     @Synchronized fun applyMpkMiniMk2StagePreset(deviceKey: String): Boolean =
         applyMpkMiniMk2ControlsPreset(deviceKey)
 
-    /** Four taps establish the tempo. A deliberate arm skips an additional count-in. */
+    /** Tap always sounds; fourth tap starts an armed stopped take, without count-in. */
     @Synchronized fun tapTempo(nowMillis: Long = android.os.SystemClock.elapsedRealtime()): Int? {
+        val accent = tapTracker.tapCount == 0 || nowMillis - lastTapMillis > 2_000L
+        NativeEngine.midi(NativeEngine.METRONOME_CLICK, 0, if (accent) 1 else 0, 0)
+        lastTapMillis = nowMillis
         val result = tapTracker.tap(nowMillis)
         if (result != null) {
             setBpm(result)
-            if (tapRecordArmed && !playing) startRecordingFromTap()
-            tapRecordArmed = false
+            if (armedTrack != null && !playing) startRecordingFromTap()
         }
         publish()
         return result
     }
-    @Synchronized fun setTapRecordArmed(value: Boolean) {
-        tapRecordArmed = value
-        tapTracker.reset()
-        publish()
-    }
+
     private fun startRecordingFromTap() {
-        if (tracks.none { it.id in inputTargetIds }) return
+        if (armedTrack == null) return
         absoluteTick = 0.0
-        lastScheduled = -0.01
+        lastScheduled = 0.01 // Fourth TAP already made a click.
         clockNs = System.nanoTime()
         playing = true
         countInActive = false
         countInProgress = 0.0
         lastClockIndex = -1L
         clockSender?.invoke(0xfa)
-        armedTargets = inputTargetIds.toSet()
-        armedTrack = armedTargets.firstOrNull()
         armedAt = 0.0
         updateRecording()
     }
