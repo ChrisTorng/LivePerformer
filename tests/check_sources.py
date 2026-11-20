@@ -64,7 +64,7 @@ math=(root/'app/src/main/java/tw/idv/christorng/liveperformer/LoopMath.kt').read
 keyboard=(root/'app/src/main/java/tw/idv/christorng/liveperformer/PianoKeyboardView.kt').read_text()
 midi=(root/'app/src/main/java/tw/idv/christorng/liveperformer/MidiInput.kt').read_text()
 panel=(root/'app/src/main/java/tw/idv/christorng/liveperformer/PerformancePanel.kt').read_text()
-for required in ('LoopController(context)', 'looper::onMidi', 'PerformancePanel(', 'settingsPage = SettingsPage.PROJECT', 'NativeEngine.loadFontCollection'):
+for required in ('LoopController(context)', 'looper.onMidi(', 'PerformancePanel(', 'settingsPage = SettingsPage.PROJECT', 'NativeEngine.loadFontCollection'):
     assert required in activity, required
 for required in ('looper.recordPause()', 'looper.playStop()', 'onAddTrack', 'onClear', 'looper.setMetronome', 'looper.toggleSolo'):
     assert required in panel, required
@@ -248,10 +248,10 @@ keyboard = (root/'app/src/main/java/tw/idv/christorng/liveperformer/PianoKeyboar
 for needle in ('PROJECT_BEAT', 'SYSTEM_AUDIO', 'SYSTEM_MIDI', 'SYSTEM_FONTS',
                'importMidiRoutes', 'exportMidiRoutes'):
     assert needle in activity, needle
-for needle in ('tapTempo(', 'tapRecordArmed', 'toggleInputTarget(',
+for needle in ('tapTempo(', 'startRecordingFromTap(', 'toggleInputTarget(',
                'inputTargetIds', 'importMidiRouting(', 'exportMidiRouting('):
     assert needle in looper, needle
-for needle in ('Tap 錄', 'itemsIndexed', 'toggleInputTarget', 'showExternalVelocities'):
+for needle in ('looper.tapTempo()', 'itemsIndexed', 'toggleInputTarget', 'showExternalVelocities'):
     assert needle in panel, needle
 assert 'val tapCount' in tap and 'taps.zipWithNext' in tap
 assert 'showExternalVelocities' in keyboard and 'hasActiveTouches' in keyboard
@@ -272,7 +272,7 @@ assert 'override fun onWindowFocusChanged(hasFocus: Boolean)' in activity
 assert 'BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE' in activity
 assert 'Modifier.width(42.dp).height(172.dp)' in panel
 assert 'Text("−")' not in panel and 'Text("+")' not in panel
-assert 'lastMidi' not in activity
+assert 'lastMidiMessage' in activity
 focus = looper.split('fun selectTrack(id: Int)', 1)[1].split('fun addTrack(', 1)[0]
 assert 'inputTargetIds.clear()' in focus and 'inputTargetIds += id' in focus
 number_toggle = looper.split('fun toggleInputTarget(id: Int)', 1)[1].split('private fun isDrumTrack(', 1)[0]
@@ -281,6 +281,7 @@ assert 'inputTargetIds.remove(id)' in number_toggle
 assert 'releaseLiveTrack(id)' in number_toggle
 assert 'InputRoutingPolicy.keyboardDestinations' in looper
 assert 'isCountInPreRoll' in looper and 'fun isCountInPreRoll' in math
-assert '"metronome-volume"' in looper
-print('PASS: Pad/keybed input isolation, stuck-note guard, pre-roll and K7 click volume')
+assert '"metronome-toggle"' in looper and 'NativeEngine.METRONOME_CLICK' in looper
+assert 'finishRecordingPass(' in looper and 'lastMidiMessage' in activity
+print('PASS: continuous replace recording, keyboard MIDI monitor and K7 click toggle')
 print('PASS: immersive mode, horizontal settings gain, compact stage faders and single/multi input selection')
