@@ -113,6 +113,7 @@ class LoopController(context: Context) {
     private val fontTitles = mutableMapOf<String, String>()
     private val keysDown = mutableMapOf<Int, MutableSet<Int>>()
     private val keyVelocities = mutableMapOf<Int, MutableMap<Int, Int>>()
+    private val physicalKeybed = MidiKeybedMonitor()
     private val scheduler = ScheduledThreadPoolExecutor(1) { command ->
         Thread(command, "LivePerformer-Loop").apply { priority = Thread.MAX_PRIORITY - 1 }
     }
@@ -232,6 +233,7 @@ class LoopController(context: Context) {
         keyVelocities.clear()
         NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
         liveInputOwners.clear()
+        physicalKeybed.clear()
         bpm = 120
         bars = 2
         beatsPerBar = 4
@@ -280,6 +282,7 @@ class LoopController(context: Context) {
         countInActive = false
         NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
         liveInputOwners.clear()
+        physicalKeybed.clear()
         absoluteTick = 0.0
         lastScheduled = -0.01
         clockNs = System.nanoTime()
@@ -363,6 +366,7 @@ class LoopController(context: Context) {
             keysDown.clear()
             keyVelocities.clear()
             liveInputOwners.clear()
+            physicalKeybed.clear()
             absoluteTick = 0.0
             lastScheduled = -0.01
             clockNs = System.nanoTime()
@@ -569,7 +573,9 @@ class LoopController(context: Context) {
         val countLeft = if (countInActive) kotlin.math.ceil(
             (countInBars * LoopMath.barTicks(beatsPerBar, beatUnit) - countInProgress) / beatSize
         ).toInt().coerceAtLeast(1) else 0
-        val inputVelocities = mutableMapOf<Int, Int>()
+        // Display the physical keybed's MIDI input even if an instrument is
+        // muted, pad-only, or not a recording destination.
+        val inputVelocities = physicalKeybed.velocities().toMutableMap()
         tracks.filter { it.id in inputTargetIds }.forEach { track ->
             keyVelocities[track.channel]?.forEach { (pitch, velocity) ->
                 inputVelocities[pitch] = maxOf(inputVelocities[pitch] ?: 0, velocity)
@@ -801,6 +807,7 @@ class LoopController(context: Context) {
             countInActive = false
             NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
             liveInputOwners.clear()
+            physicalKeybed.clear()
             keysDown.clear()
             keyVelocities.clear()
             resetActivity()
@@ -911,6 +918,7 @@ class LoopController(context: Context) {
         }
         NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 64, 0)
         NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 120, 0)
+        NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 11, 127)
         keysDown.remove(track.channel)
         keyVelocities.remove(track.channel)
         track.heldVelocities.clear()
@@ -1029,9 +1037,21 @@ class LoopController(context: Context) {
 
     /** Physical source channel is independent from the synth's assigned track channel. */
     @Synchronized fun onExternalMidi(event: MidiEvent) {
+        if (physicalKeybed.accept(event)) publish()
         val configured = midiRoutes.filter { it.matches(event) }
         val routes = if (configured.isNotEmpty()) configured
             else defaultMpkCcRoute(event)?.let { listOf(it) } ?: emptyList()
+        // MPK's downward joystick sends CC11=127 and returns to CC11=0 at
+        // centre. MIDI CC11 is persistent Expression (0=inaudible), not a
+        // momentary modulation. Without an explicit route, neutralize this
+        // hardware-specific control so it cannot silence the entire track.
+        if (routes.isEmpty() && event.kind == 0xb0 && event.channel == 0 &&
+            event.data1 == 11 && event.deviceName.contains("MPK", ignoreCase = true)) {
+            tracks.filter { it.id in keyboardDestinations(true) }.forEach {
+                NativeEngine.midi(NativeEngine.CONTROLLER, it.channel, 11, 127)
+            }
+            return
+        }
         if (routes.isNotEmpty()) {
             for (route in routes) {
                 val track = tracks.firstOrNull { it.id == route.trackId }
@@ -1651,6 +1671,9 @@ class LoopController(context: Context) {
                 t.bank, t.program
             )
             NativeEngine.midi(NativeEngine.CONTROLLER, t.channel, 7, t.volume)
+            // Expression is an independent persistent gain controller.
+            // Keep it at full volume unless the user explicitly routes CC11.
+            NativeEngine.midi(NativeEngine.CONTROLLER, t.channel, 11, 127)
         }
     }
 
