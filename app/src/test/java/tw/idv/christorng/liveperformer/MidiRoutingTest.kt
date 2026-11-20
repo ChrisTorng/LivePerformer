@@ -101,6 +101,34 @@ class MidiRoutingTest {
             setOf(1, 2, 3), emptyList(), false, 1, 2))
     }
 
+    @Test fun rawKeybedMonitorIsIndependentOfSelectedDestinations() {
+        val monitor = MidiKeybedMonitor()
+        val press = message(0x90, 60, 107)
+        assertTrue(monitor.accept(press))
+        assertEquals(mapOf(60 to 107), monitor.velocities())
+        // Pad Note channel 2 must not replace the physical keyboard overlay.
+        assertFalse(monitor.accept(message(0x91, 44, 127)))
+        assertEquals(mapOf(60 to 107), monitor.velocities())
+        assertTrue(monitor.accept(message(0x90, 60, 0)))
+        assertTrue(monitor.velocities().isEmpty())
+        assertTrue(monitor.accept(message(0x90, 62, 72)))
+        assertTrue(monitor.accept(message(0x80, 62, 0)))
+        assertTrue(monitor.velocities().isEmpty())
+    }
+
+    @Test fun keybedMonitorKeepsOverlappingDeviceNotesUntilBothRelease() {
+        val monitor = MidiKeybedMonitor()
+        val first = message(0x90, 65, 80, "device-a")
+        val second = message(0x90, 65, 114, "device-b")
+        monitor.accept(first)
+        monitor.accept(second)
+        assertEquals(114, monitor.velocities()[65])
+        monitor.accept(first.copy(status = 0x80, data2 = 0))
+        assertEquals(114, monitor.velocities()[65])
+        monitor.accept(second.copy(status = 0x80, data2 = 0))
+        assertTrue(monitor.velocities().isEmpty())
+    }
+
     @Test fun previousMuteModeStillInterprets127And0AsAbsoluteState() {
         val old = MidiRoute(21, "mpk", 1, "cc", 28, 28, 1, "mute")
         assertEquals(true, old.targetState(message(0xb1, 28, 127), false))
