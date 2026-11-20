@@ -158,9 +158,14 @@ class MidiKeybedMonitor {
 }
 
 
-/** MPK down-joystick CC11 is 0 at rest. Passing that through as standard
- * Expression would permanently silence the synth until CC11=127 arrived. */
+/** Convert the MPK MKII Y-down joystick to proper MIDI expression semantics. */
 object JoystickExpressionPolicy {
+    /** MPK MKII Y-down: 0 at rest, 127 fully deflected.
+     * MIDI expression is the opposite: 127 normal, 0 fully attenuated.
+     * The transformed value is standard MIDI and can be saved as CC11. */
+    fun expressionValue(raw: Int): Int = 127 - raw.coerceIn(0, 127)
+
+    /** An explicit user CC route always overrides the hardware default. */
     fun needsNeutralExpression(event: MidiEvent, hasMatchedRoute: Boolean): Boolean =
         !hasMatchedRoute && event.kind == 0xb0 && event.channel == 0 &&
             event.data1 == 11 && event.deviceName.contains("MPK", ignoreCase = true)
