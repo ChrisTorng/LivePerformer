@@ -167,8 +167,8 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - **Note Bank B** (MPK Pad MIDI Channel 2, Note 44–51): eight notes of **Bass C2 major by default** (C2 D2 E2 F2 G2 A2 B2 C3); adjust key, major/natural-minor mode, octave, or individual pitches by editing the existing Bass MIDI route.
 - **CC Bank A** (MPK Pad MIDI Channel 2, CC 20–27): Pad1 Play/Stop; 2 Record/Stop; 3 Metronome On/Off; 4–8 Solo tracks 1–5. Each physical press (CC=127) toggles the current app state; release (CC=0) has no effect.
 - **CC Bank B** (MPK Pad MIDI Channel 2, CC 28–35): Pad1–7 Mute tracks 1–7 by current displayed track order; Pad8 Mute/Unmute All. Bank B is hardware Toggle: CC127 turns ON, CC0 turns OFF, following controller latch state rather than toggling again in software.
-- **Knobs K1–K7** (MPK Keybed/Controls Channel 1): currently configured by user as **CC2–8**, mapped to CC7 volume of the first seven display-ordered tracks; K8 is **CC9** and controls master FluidSynth gain 0.0–1.5. App default is now **CC2–9**; previous CC1–8 and alternate CC70–77 remain selectable. Knobs send continuous values, never toggle.
-- In **Project Settings → MIDI Routing**, first apply "Note A 鼓組 / Note B Bass", then "CC A/B 控制與 8 Knob 音量". Applying the second preset explicitly replaces the MPK CC 20–35 and the selected knob 8-CC interval **on the specified device**. It does not overwrite the Note routes or other controls. Afterward, any route can be edited individually: kind, channel, note range, action, target track slot and `ccMode`.
+- **Knobs K1–K6** (MPK Keybed/Controls Channel 1): user CC2–7 map to the volume of the first six display-ordered tracks; **K7 (CC8) controls metronome click volume**, while **K8 (CC9) controls master gain 0.0–1.5**. App default is now **CC2–9**; previous CC1–8 and alternate CC70–77 remain selectable. Knobs send continuous values, never toggle.
+- In **Project Settings → MIDI Routing**, first apply "Note A 鼓組 / Note B Bass", then "CC A/B 控制與 K1–K8 音量". Applying the second preset explicitly replaces the MPK CC 20–35 and the selected knob 8-CC interval **on the specified device**. It does not overwrite the Note routes or other controls. Afterward, any route can be edited individually: kind, channel, note range, action, target track slot and `ccMode`.
 - Individual CC routes support **press-toggle** (Bank A Momentary hardware + app-state toggle), **absolute** (Bank B hardware Toggle; CC127 = ON / CC0 = OFF), **momentary** (press-only) and **legacy** for old project routing. The new preset selects `press-toggle` for CC20–27 and `absolute` for CC28–35.
 - Position-based routes follow the current track order. Missing tracks do nothing; new tracks instantly become addressable when inserted at a matching position. The global master knob works even if no track exists.
 - **Joystick verified against Akai official Editor manual (p.12):** X Axis Pitchbend sends 14-bit pitch bend to the selected instrument (nominal default ±2 semitones unless the SF2/RPN bend range differs). Y Axis **"CC 2" means *Dual CC mode*, not controller #2**: UP=CC1 (modulation/vibrato depending on SoundFont), DOWN=CC11 (expression). Both operate on Keybed/Controls Ch1 and pass through to the selected track. These do **not** collide with Knobs CC2–9. The app does not remap those joystick assignments.
@@ -186,7 +186,7 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - 系統設定：映射／音訊／MIDI／音色；專案設定：專案／節拍／MIDI 路由，頂端分頁不再從長頁向下尋找設定。
 - 演奏畫面點擊 BPM 區域連續四下，三段間隔平均計算 BPM；「Tap 錄」先待命，第四拍直接錄製，不再加一次 Count-in。一般錄製保留原有 Count-in。CC 路由動作另外提供 tap-tempo、tap-record。
 - MIDI 路由使用獨立的 `liveperformer.midi-routes.v1` JSON 匯入／匯出，載入不修改專案音軌、速度或音符；進入 MIDI 路由分頁操作。Akai MPK mini MKII 既有音符／Pad／CC／Knob 路由保留。
-- 每個音軌左邊數字可按選取多個鍵盤輸入目的軌，長按拖曳可排序。觸控鍵盤與一般鍵盤輸入廣播至選取的音軌並在錄製時分軌量化儲存；固定鼓 Pad／Bass Pad 仍走各自路由。
+- 每個音軌左邊數字可按選取多個鍵盤輸入目的軌，長按拖曳可排序。觸控鍵盤與一般鍵盤輸入只發送給未指定為 Pad 的選取音軌；固定鼓 Pad／Bass Pad 仍走各自路由，但三軌可同時待錄且只記錄各自收到的音符。
 - 鍵盤以直條呈現每一個目前按住的 MIDI NoteOn Velocity，而非 PCM 音量；縮窄各軌音量表、縮短琴鍵高度、擴大 Piano Roll。
 - 仍須完成 Android CI 與 Galaxy A25 5G、MPK mini MKII 的手動實機測試；目前不能宣稱硬體確認。
 
@@ -197,3 +197,12 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - 鍵盤每個 MIDI NoteOn 的 Velocity 改為水平方向短線，線在琴鍵中的垂直高度代表力度，多音符各自標示，並非輸出音量。
 - 鼓／Bass 無錄製預設 C2，其他樂器預設 C3；起點與錄製音域以 C 為八度邊界，PLAY 維持 C 到 C 兩個完整八度，MONITOR 依內容涵蓋完整音域。
 - 此版使用既有公開開發測試簽章；CI 通過不等於已經在 Galaxy A25 5G 實機驗證。
+
+## v0.4.16 — source-separated live recording and safe note release
+
+- **Simultaneous armed tracks do not mean broadcast keyboard input:** When Drums are bound to Note Pad A and Bass to Note Pad B, the keybed records and plays only other armed tracks (e.g. Piano/Lead). Pad notes continue going to their dedicated tracks, including when all three numbered targets are armed. The built-in MPK A/B fallback is handled even before saving explicit Pad routes; a non-MPK source without explicit Pad assignments retains normal multi-track behavior.
+- **No stuck notes after changing tracks:** Selecting a track, removing an armed target, or changing a preset releases the departed channel (including sustain) instead of leaving a NoteOn forever. Live key releases follow their original destination, never an instrument selected after the key press.
+- **Count-in early downbeat:** A NoteOn within the final half of the active quantization subdivision before count-in finishes is captured into tick zero. The same half-grid tolerance applies to an armed recording at the next loop boundary.
+- **K7 metronome / K8 master:** The default and preset MPK CC2–9 assignments place K7 on the metronome and K8 on main volume. Compatible historical K7 slot-7 volume rules are migrated on project load. The project settings and landscape live view include a click-volume control.
+- Track number touch targets are wider. A track at volume 0 shows a warning and its volume popup includes a one-tap reset to 100.
+- Native sample rendering keeps reverb and chorus disabled by default to retain predictable low-latency behavior; higher-quality SoundFonts remain the best fidelity improvement.
