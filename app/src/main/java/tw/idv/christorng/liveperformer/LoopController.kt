@@ -859,14 +859,34 @@ class LoopController(context: Context) {
         changed()
     }
 
+    /** Pad-assigned tracks remain recordable, but keybed notes never reach them. */
+    private fun padAssignedTrackIds(sourceIsMpk: Boolean): Set<Int> {
+        val explicit = midiRoutes.filter {
+            it.trackId != 0 && it.action in setOf("note", "scale", "custom", "drum-pads") &&
+                ((it.kind == "note" && it.channel == 1 && it.first in 36..51 &&
+                    it.last in 36..51) ||
+                 (it.kind == "cc" && it.first in 20..35 && it.last in 20..35))
+        }.mapTo(mutableSetOf()) { it.trackId }
+        if (sourceIsMpk) {
+            tracks.firstOrNull(::isDrumTrack)?.let { explicit.add(it.id) }
+            tracks.firstOrNull {
+                it.name.contains("Bass", ignoreCase = true) ||
+                    it.name.contains("貝斯") || it.category == "貝斯"
+            }?.let { explicit.add(it.id) }
+        }
+        return explicit
+    }
+
     /** Note release follows the original track even when focus has changed. */
-    private fun dispatchLiveInput(source: String, type: Int, note: Int, velocity: Int) {
+    private fun dispatchLiveInput(
+        source: String, type: Int, note: Int, velocity: Int, sourceIsMpk: Boolean = false
+    ) {
         val noteType = if (type == NativeEngine.NOTE_ON && velocity == 0)
             NativeEngine.NOTE_OFF else type
         val key = "${source}:${note}"
         val destinations: Set<Int> = when (noteType) {
             NativeEngine.NOTE_ON -> {
-                val ids = inputTargetIds.toSet()
+                val ids = inputTargetIds - padAssignedTrackIds(sourceIsMpk)
                 liveInputOwners.remove(key)?.forEach { id ->
                     tracks.firstOrNull { it.id == id }?.let {
                         dispatchToTrack(it, NativeEngine.NOTE_OFF, note, 0)
@@ -876,7 +896,7 @@ class LoopController(context: Context) {
                 ids
             }
             NativeEngine.NOTE_OFF -> liveInputOwners.remove(key).orEmpty()
-            else -> inputTargetIds.toSet()
+            else -> inputTargetIds - padAssignedTrackIds(sourceIsMpk)
         }
         tracks.filter { it.id in destinations }.forEach {
             dispatchToTrack(it, noteType, note, velocity)
@@ -1130,11 +1150,14 @@ class LoopController(context: Context) {
         }
         if (isMappedGroup && event.channel != 0) return
         val source = "midi:${event.deviceKey}:${event.deviceId}:${event.port}:${event.channel}"
+        val isMpkKeybed = event.channel == 0 &&
+            event.deviceName.contains("MPK", ignoreCase = true)
         when (event.kind) {
-            0x80 -> dispatchLiveInput(source, NativeEngine.NOTE_OFF, event.data1, event.data2)
+            0x80 -> dispatchLiveInput(source, NativeEngine.NOTE_OFF,
+                event.data1, event.data2, isMpkKeybed)
             0x90 -> dispatchLiveInput(source,
                 if (event.data2 == 0) NativeEngine.NOTE_OFF else NativeEngine.NOTE_ON,
-                event.data1, event.data2)
+                event.data1, event.data2, isMpkKeybed)
             0xb0 -> if (event.channel == 0 || midiRoutes.isEmpty())
                 tracks.filter { it.id in inputTargetIds }.forEach {
                     dispatchToTrack(it, NativeEngine.CONTROLLER, event.data1, event.data2)
