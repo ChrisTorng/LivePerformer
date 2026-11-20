@@ -297,7 +297,7 @@ fun PerformancePanel(
                     }
                 }
             }
-            SmallAction("節拍音量", { showClickVolume = true })
+            if (landscape) SmallAction("節拍音量", { showClickVolume = true })
             Column(Modifier.width(69.dp).height(50.dp).clickable { looper.tapTempo() },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceEvenly) {
@@ -339,7 +339,7 @@ fun PerformancePanel(
         }
 
         BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
-            val minLeft = minOf(142.dp, (maxWidth - 90.dp).coerceAtLeast(50.dp))
+            val minLeft = minOf(178.dp, (maxWidth - 90.dp).coerceAtLeast(50.dp))
             val maxLeft = (maxWidth - 90.dp).coerceAtLeast(minLeft)
             val labelWidth = (maxWidth * paneFraction.floatValue).coerceIn(minLeft, maxLeft)
             val density = LocalDensity.current
