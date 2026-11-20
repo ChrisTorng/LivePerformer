@@ -885,6 +885,10 @@ class LoopController(context: Context) {
 
     /** Record canonical GM drum roles, translate only when sending to synth. */
     private fun dispatchToTrack(track: Track, type: Int, a: Int, b: Int) {
+        if (type == NativeEngine.CONTROLLER && a == 7) {
+            setTrackVolume(track.id, b)
+            return
+        }
         advance(System.nanoTime())
         updateRecording()
         if (type == NativeEngine.NOTE_ON || type == NativeEngine.NOTE_OFF) {
@@ -892,6 +896,12 @@ class LoopController(context: Context) {
             val velocity = b.coerceIn(0, 127)
             if (track.id in recordingTargets) {
                 capture(track, type, note, velocity, absoluteTick)
+            } else if (countInActive && track.id in armedTargets &&
+                LoopMath.isCountInPreRoll(countInProgress,
+                    countInBars * LoopMath.barTicks(beatsPerBar, beatUnit), quantizeDivision)) {
+                preRollEvents += Captured(track.id,
+                    countInProgress - countInBars * LoopMath.barTicks(beatsPerBar, beatUnit),
+                    type, note, velocity)
             } else if (!countInActive && track.id in armedTargets &&
                 absoluteTick >= armedAt - LoopMath.preRollTicks(quantizeDivision) &&
                 absoluteTick < armedAt) {
@@ -935,13 +945,16 @@ class LoopController(context: Context) {
         if (event.channel == 0 && number in firstKnob..(firstKnob + 7)) {
             val hasEditedKnobs = midiRoutes.any {
                 sameDevice(it) && it.kind == "cc" && it.channel in setOf(-1, 0) &&
-                    it.action in setOf("slot-volume", "master")
+                    it.action in setOf("slot-volume", "metronome-volume", "master")
             }
             if (hasEditedKnobs) return null
             val slot = number - firstKnob
             return MidiRoute(-1, event.deviceKey, 0, "cc", number, number, 0,
-                if (slot < 7) "slot-volume" else "master",
-                if (slot < 7) slot else -1)
+                when (slot) {
+                    in 0..5 -> "slot-volume"
+                    6 -> "metronome-volume"
+                    else -> "master"
+                }, if (slot < 6) slot else -1)
         }
         return null
     }
@@ -978,6 +991,7 @@ class LoopController(context: Context) {
                             else setTrackVolume(target.id, event.data2)
                         }
                     }
+                    "metronome-volume" -> setMetronomeVolume(event.data2)
                     "master" -> masterVolumeFromMidi?.invoke(
                         event.data2.coerceIn(0, 127) / 127f * 1.5f)
                     "mute", "slot-mute" -> {
@@ -1085,17 +1099,17 @@ class LoopController(context: Context) {
         if ((id == null && midiRoutes.size >= 48) || (id != null && midiRoutes.none { it.id == id }) ||
             deviceKey.length > 256 || channel !in -1..15 ||
             kind !in setOf("note", "cc", "program") ||
-            action !in setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "select-track", "tap-tempo", "tap-record",
+            action !in setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "metronome-volume", "select-track", "tap-tempo", "tap-record",
                 "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track",
                 "slot-volume", "slot-mute", "slot-solo", "mute-all") ||
             (kind == "program" && action != "select-track") ||
             (kind != "program" && action == "select-track") ||
-            (action in setOf("volume", "pan", "master", "mute", "solo",
+            (action in setOf("volume", "pan", "master", "metronome-volume", "mute", "solo",
                 "play-stop", "record-toggle", "metronome-toggle", "next-track", "tap-tempo", "tap-record",
                 "slot-volume", "slot-mute", "slot-solo", "mute-all") && kind != "cc") ||
             first !in 0..127 || last !in first..127 ||
             (trackId != 0 && tracks.none { it.id == trackId }) ||
-            (trackId == 0) != (action in setOf("master", "play-stop", "record-toggle",
+            (trackId == 0) != (action in setOf("master", "metronome-volume", "play-stop", "record-toggle",
                 "metronome-toggle", "next-track", "tap-tempo", "tap-record", "slot-volume", "slot-mute", "slot-solo", "mute-all")) ||
             noteBase !in -1..127 || scaleMode !in MidiPitch.modes ||
             ccMode !in MidiRoute.ccModes ||
@@ -1209,7 +1223,7 @@ class LoopController(context: Context) {
             matchesDevice(r) && r.kind == "cc" &&
                 ((r.channel in setOf(-1, 1) && r.first <= 35 && r.last >= 20) ||
                  (r.channel in setOf(-1, 0) &&
-                     (r.action in setOf("slot-volume", "master") ||
+                     (r.action in setOf("slot-volume", "metronome-volume", "master") ||
                       (r.first <= firstKnobCc + 7 && r.last >= firstKnobCc))))
         }
         // Slot targets are positions in the current performance track order.
@@ -1225,9 +1239,11 @@ class LoopController(context: Context) {
         for ((number, action, slot) in assignments)
             proposed += MidiRoute(next++, deviceKey, 1, "cc", number, number,
                 0, action, slot, ccMode = if (number <= 27) "press-toggle" else "absolute")
-        for (slot in 0..6)
+        for (slot in 0..5)
             proposed += MidiRoute(next++, deviceKey, 0, "cc",
                 firstKnobCc + slot, firstKnobCc + slot, 0, "slot-volume", slot)
+        proposed += MidiRoute(next++, deviceKey, 0, "cc",
+            firstKnobCc + 6, firstKnobCc + 6, 0, "metronome-volume")
         proposed += MidiRoute(next++, deviceKey, 0, "cc",
             firstKnobCc + 7, firstKnobCc + 7, 0, "master")
         if (remainder.size + proposed.size > 48) return false
