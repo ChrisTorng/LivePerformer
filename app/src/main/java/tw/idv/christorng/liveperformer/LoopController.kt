@@ -35,6 +35,7 @@ data class LoopView(
     val beatUnit: Int,
     val quantizeDivision: Int,
     val metronome: Boolean,
+    val metronomeVolume: Int,
     val playing: Boolean,
     val armed: Boolean,
     val recording: Boolean,
@@ -103,6 +104,7 @@ class LoopController(context: Context) {
     private var nextMidiRouteId = 1
     @Volatile private var clockSender: ((Int) -> Unit)? = null
     @Volatile var masterVolumeFromMidi: ((Float) -> Unit)? = null
+    private val liveInputOwners = mutableMapOf<String, MutableSet<Int>>()
     private var lastClockIndex = -1L
 
     fun setClockSender(sender: ((Int) -> Unit)?) { clockSender = sender }
@@ -121,6 +123,7 @@ class LoopController(context: Context) {
     private var quantizeDivision = 16
     private var hasUnsavedChanges = true
     private var metronome = true
+    private var metronomeVolume = 100
     private var countInEnabled = true
     private var countInBars = 1
     private var countInActive = false
@@ -162,6 +165,7 @@ class LoopController(context: Context) {
         beatUnit = 4
         quantizeDivision = 16
         metronome = true
+        metronomeVolume = 100
         countInEnabled = true
         countInBars = 1
         countInActive = false
@@ -233,6 +237,7 @@ class LoopController(context: Context) {
         beatUnit = 4
         quantizeDivision = 16
         metronome = true
+        metronomeVolume = 100
         countInEnabled = true
         countInBars = 1
         countInActive = false
@@ -366,6 +371,7 @@ class LoopController(context: Context) {
             .takeIf { it in LoopMath.supportedQuantization } ?: 16
         bpm = root.optInt("bpm", 120).coerceIn(40, 240)
         metronome = root.optBoolean("metronome", true)
+        metronomeVolume = root.optInt("metronomeVolume", 100).coerceIn(0, 127)
         countInEnabled = root.optBoolean("countInEnabled", true)
         countInBars = root.optInt("countInBars", 1).coerceIn(1, 2)
         selectedId = root.optInt("selectedId", newTracks.firstOrNull()?.id ?: 0)
@@ -396,17 +402,22 @@ class LoopController(context: Context) {
     private fun decodeMidiRoutes(routeArray: JSONArray): List<MidiRoute> {
         val importedRoutes = mutableListOf<MidiRoute>()
         require(routeArray.length() <= 64) { "MIDI 路由超過上限" }
-        val knownActions = setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "select-track", "tap-tempo", "tap-record",
+        val knownActions = setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "metronome-volume", "select-track", "tap-tempo", "tap-record",
             "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track",
             "slot-volume", "slot-mute", "slot-solo", "mute-all")
         for (index in 0 until routeArray.length()) {
             val item = routeArray.getJSONObject(index)
             val kind = item.optString("kind", "note")
-            val action = item.optString("action", "note")
+            val originalAction = item.optString("action", "note")
             val first = item.optInt("first")
             val last = item.optInt("last", 127)
             val ch = item.optInt("channel", -1)
             val trackId = item.optInt("trackId")
+            val source = item.optString("deviceKey", "*")
+            val action = if (originalAction == "slot-volume" && kind == "cc" &&
+                ch == 0 && trackId == 0 && item.optInt("noteBase", -1) == 6 &&
+                first == last && first == defaultKnobFirstCc(source) + 6)
+                "metronome-volume" else originalAction
             require(kind in setOf("note", "cc", "program") &&
                 action in knownActions && first in 0..127 && last in first..127 &&
                 ch in -1..15 && item.optString("deviceKey", "*").length <= 256) {
@@ -478,7 +489,7 @@ class LoopController(context: Context) {
             .put("bpm", bpm).put("bars", bars)
             .put("beatsPerBar", beatsPerBar).put("beatUnit", beatUnit)
             .put("quantizeDivision", quantizeDivision)
-            .put("metronome", metronome)
+            .put("metronome", metronome).put("metronomeVolume", metronomeVolume)
             .put("countInEnabled", countInEnabled).put("countInBars", countInBars)
             .put("selectedId", selectedId).put("nextId", nextId)
             .put("inputTargetIds", JSONArray(inputTargetIds.toList()))
@@ -561,7 +572,7 @@ class LoopController(context: Context) {
                 inputVelocities[pitch] = maxOf(inputVelocities[pitch] ?: 0, velocity)
             }
         }
-        return LoopView(bpm, bars, beatsPerBar, beatUnit, quantizeDivision, metronome, playing, armedTrack != null,
+        return LoopView(bpm, bars, beatsPerBar, beatUnit, quantizeDivision, metronome, metronomeVolume, playing, armedTrack != null,
             recordingTrack != null, selectedId, inputTargetIds.toSet(),
             at / LoopMath.barTicks(beatsPerBar, beatUnit) + 1,
             (at / LoopMath.beatTicks(beatUnit)) % beatsPerBar + 1, at.toFloat() / length,
@@ -768,7 +779,9 @@ class LoopController(context: Context) {
         val firstBeat = (floor(from / beat) + 1) * beat
         if (firstBeat <= to) {
             val index = (firstBeat / beat).toLong()
-            NativeEngine.noteOn(if (index % beatsPerBar == 0L) 76 else 77, 82, 9)
+            val clickVelocity = (82 * metronomeVolume / 100f).toInt().coerceIn(0, 127)
+            if (clickVelocity > 0) NativeEngine.noteOn(
+                if (index % beatsPerBar == 0L) 76 else 77, clickVelocity, 9)
         }
         val off = (floor((from - 96) / beat) + 1) * beat + 96
         if (off <= to) NativeEngine.noteOff(
@@ -1321,6 +1334,12 @@ class LoopController(context: Context) {
         setStructure(bars, numerator, denominator)
     @Synchronized fun setMetronome(value: Boolean) {
         metronome = value
+        changed()
+    }
+    @Synchronized fun setMetronomeVolume(value: Int) {
+        val next = value.coerceIn(0, 127)
+        if (metronomeVolume == next) return
+        metronomeVolume = next
         changed()
     }
     @Synchronized fun setCountInEnabled(value: Boolean) {
