@@ -30,7 +30,7 @@ class MpkControlsAndroidTest {
             assertEquals(expectedB, (28..35).map { number ->
                 cc.single { it.first == number && it.channel == 1 }.action
             })
-            assertEquals(List(6) { "slot-volume" } + listOf("metronome-volume", "master"),
+            assertEquals(List(6) { "slot-volume" } + listOf("metronome-toggle", "master"),
                 (2..9).map { number ->
                     cc.single { it.first == number && it.channel == 0 }.action
                 })
@@ -38,6 +38,11 @@ class MpkControlsAndroidTest {
                 .all { it.ccMode == "press-toggle" }) // Physical Bank A = Momentary
             assertTrue(cc.filter { it.channel == 1 && it.first in 28..35 }
                 .all { it.ccMode == "absolute" }) // Physical Bank B = Toggle
+            assertEquals("absolute", cc.single { it.channel == 0 && it.first == 8 }.ccMode)
+            controller.onExternalMidi(MidiEvent(key, "MPKmini2", 1, 0, 0xb0, 8, 0))
+            assertFalse(controller.state.value.metronome)
+            controller.onExternalMidi(MidiEvent(key, "MPKmini2", 1, 0, 0xb0, 8, 127))
+            assertTrue(controller.state.value.metronome)
             assertEquals(2, controller.defaultKnobFirstCc(key))
             val joystickUp = MidiEvent(key, "MPKmini2", 1, 0, 0xb0, 1, 95)
             val joystickDown = joystickUp.copy(data1 = 11)
@@ -61,7 +66,7 @@ class MpkControlsAndroidTest {
             })
             assertEquals("slot-volume",
                 current.single { it.kind == "cc" && it.channel == 0 && it.first == 2 }.action)
-            assertEquals("metronome-volume",
+            assertEquals("metronome-toggle",
                 current.single { it.kind == "cc" && it.channel == 0 && it.first == 8 }.action)
             assertEquals("master",
                 current.single { it.kind == "cc" && it.channel == 0 && it.first == 9 }.action)

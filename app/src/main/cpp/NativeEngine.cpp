@@ -116,6 +116,12 @@ class Engine final : public oboe::AudioStreamDataCallback, public oboe::AudioStr
     std::atomic<int> testSamples_{0};
     std::atomic<int64_t> lastPulseNs_{0};
     std::atomic<uint32_t> noiseState_{1};
+    // Callback-owned oscillator for an audible, SoundFont-independent beat.
+    int clickRemaining_{0};
+    int clickTotal_{1};
+    float clickPhase_{0.0f};
+    float clickAmplitude_{0.0f};
+    float clickStep_{0.0f};
 
 public:
     bool start(int deviceId = oboe::kUnspecified) {
@@ -274,6 +280,16 @@ public:
                 lastPulseNs_.store(nowNs(), std::memory_order_release);
                 continue;
             }
+            if (event.type == lp::MidiType::MetronomeClick) {
+                const int rate = sampleRate_.load(std::memory_order_relaxed);
+                clickTotal_ = std::max(1, rate / 17); // ~59 ms, short and crisp
+                clickRemaining_ = clickTotal_;
+                clickPhase_ = 0.0f;
+                clickAmplitude_ = event.data1 ? 0.72f : 0.57f;
+                clickStep_ = static_cast<float>(2.0 * 3.14159265358979323846 *
+                    (event.data1 ? 1750.0 : 1180.0) / rate);
+                continue;
+            }
             if (!active_) continue;
             const int c = event.channel;
             switch (event.type) {
@@ -317,6 +333,22 @@ public:
             output[2*i+1] += signal;
         }
         testSamples_.store(remaining, std::memory_order_relaxed);
+        // Mix after FluidSynth: no SF2 sample/track CC7/CC11 attenuation.
+        // K8 master gain still controls both instruments and the metronome.
+        const float masterClickScale = std::clamp(
+            gain_.load(std::memory_order_relaxed) / 0.8f, 0.0f, 1.5f);
+        for (int i = 0; i < frames && clickRemaining_ > 0; ++i) {
+            const int elapsed = clickTotal_ - clickRemaining_;
+            const float progress = static_cast<float>(clickRemaining_) / clickTotal_;
+            const float attack = std::min(1.0f,
+                static_cast<float>(elapsed) / std::max(1, sampleRate / 500));
+            const float envelope = attack * progress * progress;
+            const float sample = clickAmplitude_ * masterClickScale * envelope * std::sin(clickPhase_);
+            clickPhase_ += clickStep_;
+            output[2*i] = std::clamp(output[2*i] + sample, -1.0f, 1.0f);
+            output[2*i+1] = std::clamp(output[2*i+1] + sample, -1.0f, 1.0f);
+            --clickRemaining_;
+        }
         float peak = 0.f;
         for (int i = 0; i < frames * 2; ++i) peak = std::max(peak, std::abs(output[i]));
         // Hold the largest callback peak until the UI polls (~75ms), so drum
@@ -384,7 +416,7 @@ JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_selectF
 }
 JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_collectRetired(JNIEnv*, jobject) { engine().collectRetired(); }
 JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_midi(JNIEnv*, jobject, jint type, jint channel, jint a, jint b) {
-    if (type < 0 || type > 7) return;
+    if (type < 0 || type > 9 || type == 8) return;
     engine().note(static_cast<lp::MidiType>(type), channel, a, b);
 }
 JNIEXPORT jint JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_xrunCount(JNIEnv*, jobject) {

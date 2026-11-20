@@ -30,6 +30,8 @@ class ExpressionAutomationAndroidTest {
             controller.newProject(withTemplateTracks = true)
             controller.setCountInEnabled(false)
             controller.recordPause()
+            controller.playStop()
+            Thread.sleep(30)
             controller.onMidi(NativeEngine.NOTE_ON, 0, 60, 95)
             Thread.sleep(25)
             controller.onMidi(NativeEngine.NOTE_OFF, 0, 60, 0)
@@ -39,6 +41,8 @@ class ExpressionAutomationAndroidTest {
             assertTrue(originalNotes.any { it[1] == NativeEngine.NOTE_ON && it[2] == 60 })
 
             controller.recordPause()
+            controller.playStop()
+            Thread.sleep(30)
             controller.onExternalMidi(joystick(0)) // Rest = normal volume
             Thread.sleep(20)
             controller.onExternalMidi(joystick(64)) // Half down = attenuation
