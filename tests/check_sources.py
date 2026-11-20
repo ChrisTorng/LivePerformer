@@ -233,7 +233,7 @@ print('PASS: v0.4.11 MPK editor-sourced CC2–9 knobs, separate physical CC A/B 
 
 # Count-in and adaptive MIDI keyboard/level meter regression checks.
 assert '"countInEnabled"' in looper and '"countInBars"' in looper
-assert 'setCountInBars' in looper and 'if (countInActive) return' in looper
+assert 'setCountInBars' in looper and 'if (!playing || countInActive) return' in looper
 assert 'setTrackVolume' in looper and '"keyboardBase"' in looper
 assert 'VerticalLevelMeter' in panel and 'masterPeak' in panel
 assert 'lastMidi' not in panel and 'MidiSystemPanel(midiDevices, midiLogs' in activity
