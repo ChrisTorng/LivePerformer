@@ -59,6 +59,13 @@ class LoopMathTest {
         LoopMath.quantizeStep(13)
     }
 
+    @Test fun expressionAutomationKeepsSubGridTiming() {
+        val length = LoopMath.loopTicks(2)
+        assertEquals(39, LoopMath.recordedTick(139.4, 100.0, length))
+        assertEquals(0, LoopMath.recordedTick(96.0, 100.0, length))
+        assertEquals(length - 1, LoopMath.recordedTick(10000.0, 100.0, length))
+    }
+
     @Test fun endOfTakeNeverLeaksIntoNextBar() {
         assertEquals(7679, LoopMath.recordedTick(8000.0, 0.0, 7680))
     }

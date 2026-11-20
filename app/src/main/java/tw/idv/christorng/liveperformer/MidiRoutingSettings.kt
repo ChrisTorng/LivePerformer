@@ -348,8 +348,10 @@ fun MidiRoutingSettings(
         if (feedback.isNotBlank()) Text(feedback, style = MaterialTheme.typography.bodySmall)
         Text("CC Bank A 硬體 Momentary → 軟體切換，CC Bank B 硬體 Toggle → 依 127／0 設定開關。" +
             "Note A/B 不做額外按鍵鎖定。搖桿 Y AXIS 的「CC 2」代表雙 CC 模式，" +
-            "向上送 CC1、向下送 CC11；CC11 回中值 0 會使標準表情音量歸零，" +
-            "因此預設會保持表情音量 127，只有明確自訂 CC11 路由才會依其設定執行。",
+            "向上送 CC1、向下送 CC11。搖桿回中送出 0、向下到底送 127，" +
+            "系統會反向映射為標準 CC11：回中 127（正常音量）、向下 0（完全衰減）。" +
+            "CC11 的表情變化可錄進循環；CC7 音軌音量是混音設定，不錄進音符事件。" +
+            "自訂 CC11 路由優先於此預設。",
             style = MaterialTheme.typography.bodySmall)
         HorizontalDivider()
         Text("已儲存的 MIDI 路由：" + state.midiRoutes.size,

@@ -101,6 +101,15 @@ class MidiRoutingTest {
             setOf(1, 2, 3), emptyList(), false, 1, 2))
     }
 
+    @Test fun invertedMpkExpressionReturnsToFullAtCenter() {
+        assertEquals(127, JoystickExpressionPolicy.expressionValue(0))
+        assertEquals(95, JoystickExpressionPolicy.expressionValue(32))
+        assertEquals(63, JoystickExpressionPolicy.expressionValue(64))
+        assertEquals(0, JoystickExpressionPolicy.expressionValue(127))
+        assertEquals(127, JoystickExpressionPolicy.expressionValue(-1))
+        assertEquals(0, JoystickExpressionPolicy.expressionValue(200))
+    }
+
     @Test fun mpkJoystickCc11RestDoesNotPassThroughAsZeroExpression() {
         val rest = message(0xb0, 11, 0)
         val down = message(0xb0, 11, 127)

@@ -96,6 +96,9 @@ class LoopController(context: Context) {
     private val midiRoutes = mutableListOf<MidiRoute>()
     private val inputTargetIds = linkedSetOf<Int>()
     private val takeHasNotesByTrack = mutableSetOf<Int>()
+    /** Continuous CC11 curves are staged separately, so expression-only takes
+     * never erase existing notes, and a later first NoteOn cannot erase the curve. */
+    private val pendingExpressionByTrack = mutableMapOf<Int, MutableList<Event>>()
     private val heldRecordingNotesByTrack = mutableMapOf<Int, MutableSet<Int>>()
     private var armedTargets: Set<Int> = emptySet()
     private var recordingTargets: Set<Int> = emptySet()
@@ -226,6 +229,7 @@ class LoopController(context: Context) {
         heldRecordingNotes.clear()
         takeHasNotes = false
         takeHasNotesByTrack.clear()
+        pendingExpressionByTrack.clear()
         heldRecordingNotesByTrack.clear()
         recordingTargets = emptySet()
         armedTargets = emptySet()
@@ -274,6 +278,7 @@ class LoopController(context: Context) {
         preRollEvents.clear()
         takeHasNotes = false
         takeHasNotesByTrack.clear()
+        pendingExpressionByTrack.clear()
         heldRecordingNotesByTrack.clear()
         armedTargets = emptySet()
         recordingTargets = emptySet()
@@ -333,8 +338,9 @@ class LoopController(context: Context) {
                     val type = e.getInt(1)
                     val time = e.getInt(0)
                     val note = e.getInt(2)
-                    if (type in NativeEngine.NOTE_ON..NativeEngine.NOTE_OFF
-                        && time in 0 until LoopMath.loopTicks(newBars, newNumerator, newDenominator)
+                    if ((type in NativeEngine.NOTE_ON..NativeEngine.NOTE_OFF ||
+                            (type == NativeEngine.CONTROLLER && note == 11)) &&
+                        time in 0 until LoopMath.loopTicks(newBars, newNumerator, newDenominator)
                         && note in 0..127) {
                         track.events += Event(time, type, note, e.getInt(3).coerceIn(0, 127))
                     }
@@ -360,6 +366,7 @@ class LoopController(context: Context) {
             heldRecordingNotes.clear()
             heldRecordingNotesByTrack.clear()
             takeHasNotesByTrack.clear()
+            pendingExpressionByTrack.clear()
             armedTargets = emptySet()
             recordingTargets = emptySet()
             takeHasNotes = false
@@ -551,7 +558,8 @@ class LoopController(context: Context) {
                         (e.tick - old.tick).coerceAtLeast(1).toFloat() / length,
                         e.note, old.velocity)
                 }
-            } else if (e.type == NativeEngine.NOTE_OFF || e.velocity == 0) {
+            } else if (e.type == NativeEngine.NOTE_OFF ||
+                (e.type == NativeEngine.NOTE_ON && e.velocity == 0)) {
                 active.remove(e.note)?.let { start ->
                     result += LoopNoteView(start.tick.toFloat() / length,
                         (e.tick - start.tick).coerceAtLeast(1).toFloat() / length,
@@ -628,7 +636,21 @@ class LoopController(context: Context) {
         clockNs = now
     }
 
-    /** Commit a new take only when a real NoteOn occurred. Silence preserves the old track. */
+    /** MIDI Expression automation is independent of CC7 mixer volume and note replacement. */
+    private fun captureExpression(track: Track, value: Int, position: Double) {
+        val length = LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
+        // Do not quantize continuous expression: 4-ms joystick movements should
+        // not be rounded onto 1/16-note steps.
+        val tick = LoopMath.recordedTick(position, recordStart, length)
+        val events = pendingExpressionByTrack.getOrPut(track.id) { mutableListOf() }
+        val normalized = value.coerceIn(0, 127)
+        if (events.lastOrNull()?.velocity == normalized) return
+        val event = Event(tick, NativeEngine.CONTROLLER, 11, normalized)
+        if (events.lastOrNull()?.tick == tick) events[events.lastIndex] = event
+        else events.add(event)
+    }
+
+    /** Commit note takes only on NoteOn; CC11-only takes preserve prior notes. */
     private fun stopRecord(at: Double) {
         for (track in tracks.filter { it.id in recordingTargets && it.id in takeHasNotesByTrack }) {
             val heldForTrack = heldRecordingNotesByTrack[track.id].orEmpty()
@@ -645,9 +667,28 @@ class LoopController(context: Context) {
             dirty = true
             hasUnsavedChanges = true
         }
+        // Replace only the previous expression curve; leave prior notes intact
+        // if the user recorded expression without playing new notes.
+        val length = LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
+        pendingExpressionByTrack.forEach { (id, curve) ->
+            val track = tracks.firstOrNull { it.id == id && it.id in recordingTargets }
+            if (track != null && curve.isNotEmpty()) {
+                track.events.removeAll {
+                    it.type == NativeEngine.CONTROLLER && it.note == 11
+                }
+                track.events += Event(0, NativeEngine.CONTROLLER, 11, 127)
+                track.events.addAll(curve)
+                if (curve.last().velocity != 127)
+                    track.events += Event(length - 1, NativeEngine.CONTROLLER, 11, 127)
+                track.events.sortWith(compareBy<Event> { it.tick }.thenByDescending { it.type })
+                dirty = true
+                hasUnsavedChanges = true
+            }
+        }
         heldRecordingNotes.clear()
         heldRecordingNotesByTrack.clear()
         takeHasNotesByTrack.clear()
+        pendingExpressionByTrack.clear()
         preRollEvents.clear()
         takeHasNotes = false
         recordingTrack = null
@@ -658,10 +699,18 @@ class LoopController(context: Context) {
     }
 
     private fun capture(track: Track, type: Int, note: Int, velocity: Int, position: Double) {
+        if (type == NativeEngine.CONTROLLER && note == 11) {
+            captureExpression(track, velocity, position)
+            return
+        }
         val length = LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
         if (type == NativeEngine.NOTE_ON && velocity > 0 && track.id !in takeHasNotesByTrack) {
             // Replace, never overdub. Keep the previous recording through an empty pass.
             track.events.clear()
+            // An old expression curve might have left this synth channel quiet.
+            // Reset only when no new live CC11 gesture has been captured.
+            if (pendingExpressionByTrack[track.id].isNullOrEmpty())
+                NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 11, 127)
             heldRecordingNotesByTrack.remove(track.id)
             // Do not cut off a live note that began just before the downbeat.
             takeHasNotesByTrack += track.id
@@ -726,6 +775,7 @@ class LoopController(context: Context) {
             armedTrack = null
             heldRecordingNotesByTrack.clear()
             takeHasNotesByTrack.clear()
+            pendingExpressionByTrack.clear()
             // Pick up a downbeat played slightly early, within half a quantization step.
             preRollEvents.forEach { e ->
                 tracks.firstOrNull { it.id == e.trackId && it.id in recordingTargets }?.let { track ->
@@ -768,7 +818,10 @@ class LoopController(context: Context) {
                 if (occurrence <= absoluteTick && occurrence > absoluteTick - length) {
                     noteActivity(track, e.type, e.note, e.velocity)
                     if (!track.muted && (!anySolo || track.solo) &&
-                        !(track.id in recordingTargets && track.id in takeHasNotesByTrack)) {
+                        !(track.id in recordingTargets && track.id in takeHasNotesByTrack) &&
+                        !(track.id in recordingTargets &&
+                            pendingExpressionByTrack[track.id]?.isNotEmpty() == true &&
+                            e.type == NativeEngine.CONTROLLER && e.note == 11)) {
                         sendToSynth(track, e.type, e.note, e.velocity)
                         displayKey(track.channel, e.type, e.note, e.velocity)
                     }
@@ -806,6 +859,10 @@ class LoopController(context: Context) {
             playing = false
             countInActive = false
             NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
+            // A stopped take must never leave CC11 attenuation on a channel.
+            tracks.forEach {
+                NativeEngine.midi(NativeEngine.CONTROLLER, it.channel, 11, 127)
+            }
             liveInputOwners.clear()
             physicalKeybed.clear()
             keysDown.clear()
@@ -837,6 +894,7 @@ class LoopController(context: Context) {
         takeHasNotes = false
         heldRecordingNotesByTrack.clear()
         takeHasNotesByTrack.clear()
+        pendingExpressionByTrack.clear()
         if (!playing) {
             absoluteTick = 0.0
             lastScheduled = -0.01
@@ -916,6 +974,8 @@ class LoopController(context: Context) {
         heldRecordingNotesByTrack[id]?.toList()?.forEach { note ->
             capture(track, NativeEngine.NOTE_OFF, note, 0, absoluteTick)
         }
+        if (id in recordingTargets && pendingExpressionByTrack[id]?.isNotEmpty() == true)
+            capture(track, NativeEngine.CONTROLLER, 11, 127, absoluteTick)
         NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 64, 0)
         NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 120, 0)
         NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 11, 127)
@@ -949,6 +1009,10 @@ class LoopController(context: Context) {
         track.channel == 9 || track.bank >= 128 || track.category == "鼓組"
 
     private fun sendToSynth(track: Track, type: Int, canonical: Int, velocity: Int) {
+        if (type == NativeEngine.CONTROLLER || type == NativeEngine.PITCH_BEND) {
+            NativeEngine.midi(type, track.channel, canonical, velocity)
+            return
+        }
         val drumMap = if (isDrumTrack(track)) drumMaps.forPreset(track.fontId, track.bank, track.program) else null
         // SoundFont exclusiveClass is authoritative. NoteOff is a helpful fallback
         // for open-hat samples that respond to release; some one-shots ignore it.
@@ -967,7 +1031,8 @@ class LoopController(context: Context) {
         }
         advance(System.nanoTime())
         updateRecording()
-        if (type == NativeEngine.NOTE_ON || type == NativeEngine.NOTE_OFF) {
+        if (type == NativeEngine.NOTE_ON || type == NativeEngine.NOTE_OFF ||
+            (type == NativeEngine.CONTROLLER && a == 11)) {
             val note = a.coerceIn(0, 127)
             val velocity = b.coerceIn(0, 127)
             if (track.id in recordingTargets) {
@@ -1041,13 +1106,13 @@ class LoopController(context: Context) {
         val configured = midiRoutes.filter { it.matches(event) }
         val routes = if (configured.isNotEmpty()) configured
             else defaultMpkCcRoute(event)?.let { listOf(it) } ?: emptyList()
-        // MPK's downward joystick sends CC11=127 and returns to CC11=0 at
-        // centre. MIDI CC11 is persistent Expression (0=inaudible), not a
-        // momentary modulation. Without an explicit route, neutralize this
-        // hardware-specific control so it cannot silence the entire track.
+        // MPK down joystick uses 0 at rest, 127 pushed down. Standard CC11
+        // uses 127 for full expression and 0 for silence: invert at the input
+        // boundary, then record/replay real standard MIDI CC11 values.
         if (JoystickExpressionPolicy.needsNeutralExpression(event, routes.isNotEmpty())) {
+            val expression = JoystickExpressionPolicy.expressionValue(event.data2)
             tracks.filter { it.id in keyboardDestinations(true) }.forEach {
-                NativeEngine.midi(NativeEngine.CONTROLLER, it.channel, 11, 127)
+                dispatchToTrack(it, NativeEngine.CONTROLLER, 11, expression)
             }
             return
         }
