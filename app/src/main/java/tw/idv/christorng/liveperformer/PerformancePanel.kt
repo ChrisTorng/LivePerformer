@@ -209,12 +209,12 @@ fun PerformancePanel(
     onAddTrack: () -> Unit,
     onDelete: (Int) -> Unit,
     onClear: (Int) -> Unit,
-    onRename: (Int) -> Unit
+    onRename: (Int) -> Unit,
+    midiMessage: String
 ) {
     val landscape = LocalConfiguration.current.orientation ==
         android.content.res.Configuration.ORIENTATION_LANDSCAPE
     var showVolume by remember { mutableStateOf(false) }
-    var showClickVolume by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val displayPrefs = remember(context) {
         context.getSharedPreferences("performer", android.content.Context.MODE_PRIVATE)
@@ -285,42 +285,22 @@ fun PerformancePanel(
                 if (state.playing) "停止" else "播放") { looper.playStop() }
             TransportButton(if (state.recording || state.armed) "■" else "●", "錄製",
                 recording = true) { looper.recordPause() }
-            Box {
-                MetronomeToggle(state.metronome) { looper.setMetronome(!state.metronome) }
-                DropdownMenu(expanded = showClickVolume,
-                    onDismissRequest = { showClickVolume = false }) {
-                    Column(Modifier.padding(10.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("節拍器音量")
-                        VerticalGainSlider(state.metronomeVolume.toFloat(),
-                            { looper.setMetronomeVolume(it.roundToInt()) }, 127f)
-                    }
-                }
-            }
-            if (landscape) SmallAction("節拍音量", { showClickVolume = true })
-            Column(Modifier.width(69.dp).height(50.dp).clickable { looper.tapTempo() },
+            MetronomeToggle(state.metronome) { looper.setMetronome(!state.metronome) }
+            Column(Modifier.width(74.dp).height(50.dp).clickable { looper.tapTempo() },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceEvenly) {
-                Text("${state.bpm} BPM", fontSize = 13.sp, maxLines = 1)
                 Text(if (state.tapCount == 0) "TAP" else "TAP ${state.tapCount}/4",
-                    color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, maxLines = 1)
+                    color = MaterialTheme.colorScheme.primary, fontSize = 13.sp, maxLines = 1)
+                Text("${state.bpm} BPM", fontSize = 11.sp, maxLines = 1)
             }
-            Column(Modifier.width(56.dp).height(50.dp)
-                .clickable { looper.setTapRecordArmed(!state.tapRecordArmed) },
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceEvenly) {
-                Text(if (state.tapRecordArmed) "取消 Tap" else "Tap 錄",
-                    color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, maxLines = 1)
-                Text(when {
-                    state.countInBeatsLeft > 0 -> "預備${state.countInBeatsLeft}拍"
-                    state.recording -> "錄製中"
-                    state.armed -> "待錄"
-                    state.tapRecordArmed -> "已待命"
-                    else -> "待命"
-                }, color = if (state.recording || state.armed || state.tapRecordArmed)
-                    Color(0xFFF87171) else MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 10.sp, maxLines = 1)
-            }
+            Text(when {
+                state.countInBeatsLeft > 0 -> "預備${state.countInBeatsLeft}拍"
+                state.recording -> "錄製中"
+                state.armed -> "待錄"
+                else -> ""
+            }, color = if (state.recording || state.armed)
+                Color(0xFFF87171) else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.sp, maxLines = 1)
             Spacer(Modifier.weight(1f))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box {
@@ -546,7 +526,9 @@ fun PerformancePanel(
                     KeyboardMode.MONITOR -> "▥"
                     KeyboardMode.HIDDEN -> "▧"
                 }, onKeyboardMode)
-            Spacer(Modifier.weight(1f))
+            Text(midiMessage, modifier = Modifier.weight(1f).padding(horizontal = 5.dp),
+                fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.primary)
             if (keyboardMode == KeyboardMode.MONITOR) {
                 Text("${MidiPitch.name(firstKey)}–${MidiPitch.name(lastKey)}", fontSize = 11.sp)
             } else if (keyboardMode == KeyboardMode.PLAY) {
