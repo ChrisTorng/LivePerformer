@@ -784,7 +784,8 @@ class LoopController(context: Context) {
     }
 
     private fun updateRecording() {
-        if (countInActive) return
+        // Waiting for PLAY or the fourth TAP must never become recording while stopped.
+        if (!playing || countInActive) return
         if (armedTrack != null && absoluteTick >= armedAt) {
             recordingTrack = armedTrack
             recordingTargets = armedTargets
@@ -1396,6 +1397,8 @@ class LoopController(context: Context) {
                 ((r.channel in setOf(-1, 1) && r.first <= 35 && r.last >= 20) ||
                  (r.channel in setOf(-1, 0) &&
                      (r.action in setOf("slot-volume", "metronome-volume", "master") ||
+                       (r.action == "metronome-toggle" && r.trackId == 0 &&
+                        r.first == r.last && r.first !in 20..35) ||
                       (r.first <= firstKnobCc + 7 && r.last >= firstKnobCc))))
         }
         // Slot targets are positions in the current performance track order.
