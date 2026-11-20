@@ -905,6 +905,9 @@ class LoopController(context: Context) {
         lastScheduled = -0.01
         skipInitialTapClick = false
         clockNs = now
+        // Starting without count-in should record on the very same PLAY press,
+        // not depend on the next 4-ms scheduler dispatch to arm the take.
+        if (playing && !countInActive) updateRecording()
         publish()
         save()
     }
