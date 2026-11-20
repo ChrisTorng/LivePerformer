@@ -51,8 +51,7 @@ data class LoopView(
     val countInEnabled: Boolean,
     val countInBars: Int,
     val countInBeatsLeft: Int,
-    val tapCount: Int,
-    val tapRecordArmed: Boolean
+    val tapCount: Int
 )
 
 /**
@@ -605,7 +604,7 @@ class LoopController(context: Context) {
                     }, pianoNotes(it, length), it.activityLevel, it.keyboardBase,
                     if (recorded.isEmpty()) null else recorded.minOf { e -> e.note }..recorded.maxOf { e -> e.note })
             }, midiRoutes.toList(), countInEnabled, countInBars, countLeft,
-            tapTracker.tapCount, false)
+            tapTracker.tapCount)
     }
 
     private fun publish() {
