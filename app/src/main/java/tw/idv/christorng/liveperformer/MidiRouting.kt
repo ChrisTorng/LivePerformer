@@ -94,3 +94,27 @@ object MidiPitch {
     fun name(number: Int): String =
         if (number !in 0..127) "—" else names[number % 12] + (number / 12 - 1)
 }
+
+
+/** Recording armed tracks and playable keyboard destinations are separate concepts. */
+object InputRoutingPolicy {
+    fun keyboardDestinations(
+        armedIds: Set<Int>,
+        routes: List<MidiRoute>,
+        sourceIsMpk: Boolean,
+        defaultDrumId: Int?,
+        defaultBassId: Int?
+    ): Set<Int> {
+        val padTargets = routes.asSequence().filter {
+            it.trackId != 0 && it.action in setOf("note", "scale", "custom", "drum-pads") &&
+                ((it.kind == "note" && it.channel == 1 && it.first in 36..51 &&
+                    it.last in 36..51) ||
+                 (it.kind == "cc" && it.first in 20..35 && it.last in 20..35))
+        }.map { it.trackId }.toMutableSet()
+        if (sourceIsMpk) {
+            if (defaultDrumId != null) padTargets.add(defaultDrumId)
+            if (defaultBassId != null) padTargets.add(defaultBassId)
+        }
+        return armedIds - padTargets
+    }
+}
