@@ -39,6 +39,10 @@ class MpkControlsAndroidTest {
             assertTrue(cc.filter { it.channel == 1 && it.first in 28..35 }
                 .all { it.ccMode == "absolute" }) // Physical Bank B = Toggle
             assertEquals("absolute", cc.single { it.channel == 0 && it.first == 8 }.ccMode)
+            controller.onExternalMidi(MidiEvent(key, "MPKmini2", 1, 0, 0xb0, 8, 0))
+            assertFalse(controller.state.value.metronome)
+            controller.onExternalMidi(MidiEvent(key, "MPKmini2", 1, 0, 0xb0, 8, 127))
+            assertTrue(controller.state.value.metronome)
             assertEquals(2, controller.defaultKnobFirstCc(key))
             val joystickUp = MidiEvent(key, "MPKmini2", 1, 0, 0xb0, 1, 95)
             val joystickDown = joystickUp.copy(data1 = 11)
