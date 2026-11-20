@@ -26,6 +26,8 @@ object NativeEngine {
     const val TEST_PULSE = 5
     const val ALL_SOUNDS_OFF = 6
     const val PRESET_SELECT = 7
+    /** Independent PCM click, not attenuated by SoundFont or track CC7/CC11. */
+    const val METRONOME_CLICK = 9
 
     fun noteOn(note: Int, velocity: Int = 100, channel: Int = 0) = midi(NOTE_ON, channel, note, velocity)
     fun noteOff(note: Int, channel: Int = 0) = midi(NOTE_OFF, channel, note, 0)
