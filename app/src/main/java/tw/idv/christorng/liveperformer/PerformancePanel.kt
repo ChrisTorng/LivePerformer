@@ -289,21 +289,26 @@ fun PerformancePanel(
                 else -> "●"
             }, "錄製", recording = state.recording || state.armed) { looper.recordPause() }
             MetronomeToggle(state.metronome) { looper.setMetronome(!state.metronome) }
-            Column(Modifier.width(74.dp).height(50.dp).clickable { looper.tapTempo() },
+            // BPM remains at its old position; TAP occupies the former Tap-record tile.
+            Column(Modifier.width(63.dp).height(50.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center) {
+                Text("${state.bpm} BPM", fontSize = 13.sp, maxLines = 1)
+            }
+            Column(Modifier.width(60.dp).height(50.dp).clickable { looper.tapTempo() },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceEvenly) {
                 Text(if (state.tapCount == 0) "TAP" else "TAP ${state.tapCount}/4",
-                    color = MaterialTheme.colorScheme.primary, fontSize = 13.sp, maxLines = 1)
-                Text("${state.bpm} BPM", fontSize = 11.sp, maxLines = 1)
+                    color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, maxLines = 1)
+                Text(when {
+                    state.countInBeatsLeft > 0 -> "預備${state.countInBeatsLeft}拍"
+                    state.recording -> "錄製中"
+                    state.armed -> "待錄"
+                    else -> "打拍"
+                }, color = if (state.recording || state.armed)
+                    Color(0xFFF87171) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 10.sp, maxLines = 1)
             }
-            Text(when {
-                state.countInBeatsLeft > 0 -> "預備${state.countInBeatsLeft}拍"
-                state.recording -> "錄製中"
-                state.armed -> "待錄"
-                else -> ""
-            }, color = if (state.recording || state.armed)
-                Color(0xFFF87171) else MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 11.sp, maxLines = 1)
             Spacer(Modifier.weight(1f))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box {
