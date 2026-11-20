@@ -18,6 +18,10 @@ object LoopMath {
         return PPQ * 4 / division
     }
 
+    /** A note within the last half-grid of count-in starts the coming take. */
+    fun isCountInPreRoll(progress: Double, duration: Int, division: Int): Boolean =
+        progress >= duration - preRollTicks(division) && progress < duration
+
     /** Half a subdivision before the downbeat may legitimately round to tick zero. */
     fun preRollTicks(division: Int): Int = quantizeStep(division) / 2
 
