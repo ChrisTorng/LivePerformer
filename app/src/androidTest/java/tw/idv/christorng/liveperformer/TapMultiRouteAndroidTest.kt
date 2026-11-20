@@ -83,6 +83,8 @@ class TapMultiRouteAndroidTest {
             assertEquals(setOf(piano.id, bass.id), loop.state.value.inputTargetIds)
             loop.setCountInEnabled(false)
             loop.recordPause()
+            loop.playStop()
+            Thread.sleep(30)
             loop.onMidi(NativeEngine.NOTE_ON, 0, 64, 111)
             assertEquals(111, loop.state.value.keyboardVelocities[64])
             loop.onMidi(NativeEngine.NOTE_OFF, 0, 64, 0)
