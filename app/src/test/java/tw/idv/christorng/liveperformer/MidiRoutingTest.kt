@@ -101,6 +101,21 @@ class MidiRoutingTest {
             setOf(1, 2, 3), emptyList(), false, 1, 2))
     }
 
+    @Test fun mpkJoystickCc11RestDoesNotPassThroughAsZeroExpression() {
+        val rest = message(0xb0, 11, 0)
+        val down = message(0xb0, 11, 127)
+        assertTrue(JoystickExpressionPolicy.needsNeutralExpression(rest, false))
+        assertTrue(JoystickExpressionPolicy.needsNeutralExpression(down, false))
+        // A deliberately configured MIDI route retains control of CC11.
+        assertFalse(JoystickExpressionPolicy.needsNeutralExpression(rest, true))
+        assertFalse(JoystickExpressionPolicy.needsNeutralExpression(
+            message(0xb0, 7, 0), false))
+        assertFalse(JoystickExpressionPolicy.needsNeutralExpression(
+            rest.copy(deviceName = "Other MIDI controller"), false))
+        assertFalse(JoystickExpressionPolicy.needsNeutralExpression(
+            rest.copy(status = 0xb1), false))
+    }
+
     @Test fun rawKeybedMonitorIsIndependentOfSelectedDestinations() {
         val monitor = MidiKeybedMonitor()
         val press = message(0x90, 60, 107)
