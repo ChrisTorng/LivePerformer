@@ -156,3 +156,12 @@ class MidiKeybedMonitor {
 
     fun clear() = bySource.clear()
 }
+
+
+/** MPK down-joystick CC11 is 0 at rest. Passing that through as standard
+ * Expression would permanently silence the synth until CC11=127 arrived. */
+object JoystickExpressionPolicy {
+    fun needsNeutralExpression(event: MidiEvent, hasMatchedRoute: Boolean): Boolean =
+        !hasMatchedRoute && event.kind == 0xb0 && event.channel == 0 &&
+            event.data1 == 11 && event.deviceName.contains("MPK", ignoreCase = true)
+}
