@@ -857,15 +857,68 @@ class LoopController(context: Context) {
         changed()
     }
 
-    /** Touch keyboard plays all selected input destinations; explicit hardware pad routes remain independent. */
+    /** Note release follows the original track even when focus has changed. */
+    private fun dispatchLiveInput(source: String, type: Int, note: Int, velocity: Int) {
+        val noteType = if (type == NativeEngine.NOTE_ON && velocity == 0)
+            NativeEngine.NOTE_OFF else type
+        val key = "${source}:${note}"
+        val destinations: Set<Int> = when (noteType) {
+            NativeEngine.NOTE_ON -> {
+                val ids = inputTargetIds.toSet()
+                liveInputOwners.remove(key)?.forEach { id ->
+                    tracks.firstOrNull { it.id == id }?.let {
+                        dispatchToTrack(it, NativeEngine.NOTE_OFF, note, 0)
+                    }
+                }
+                if (ids.isNotEmpty()) liveInputOwners[key] = ids.toMutableSet()
+                ids
+            }
+            NativeEngine.NOTE_OFF -> liveInputOwners.remove(key).orEmpty()
+            else -> inputTargetIds.toSet()
+        }
+        tracks.filter { it.id in destinations }.forEach {
+            dispatchToTrack(it, noteType, note, velocity)
+        }
+    }
+
+    /** Touch keyboard plays the selected input destinations. */
     @Synchronized fun onMidi(type: Int, originalChannel: Int, a: Int, b: Int) {
-        tracks.filter { it.id in inputTargetIds }.forEach { dispatchToTrack(it, type, a, b) }
+        dispatchLiveInput("touch:${originalChannel}", type, a, b)
+    }
+
+    /** Stop only this channel, not the other tracks or the entire synthesizer. */
+    private fun releaseLiveTrack(id: Int) {
+        val track = tracks.firstOrNull { it.id == id } ?: return
+        advance(System.nanoTime())
+        updateRecording()
+        heldRecordingNotesByTrack[id]?.toList()?.forEach { note ->
+            capture(track, NativeEngine.NOTE_OFF, note, 0, absoluteTick)
+        }
+        NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 64, 0)
+        NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 120, 0)
+        keysDown.remove(track.channel)
+        keyVelocities.remove(track.channel)
+        track.heldVelocities.clear()
+        track.activityLevel = 0f
+        val iterator = liveInputOwners.iterator()
+        while (iterator.hasNext()) {
+            val owner = iterator.next()
+            owner.value.remove(id)
+            if (owner.value.isEmpty()) iterator.remove()
+        }
+    }
+
+    private fun releaseDepartedInputs(previous: Set<Int>, current: Set<Int>) {
+        (previous - current).forEach(::releaseLiveTrack)
     }
 
     /** Numbered track handles toggle additional input targets without changing the focused track. */
     @Synchronized fun toggleInputTarget(id: Int) {
         if (tracks.none { it.id == id }) return
-        if (!inputTargetIds.add(id)) inputTargetIds.remove(id)
+        if (!inputTargetIds.add(id)) {
+            inputTargetIds.remove(id)
+            releaseLiveTrack(id)
+        }
         changed()
     }
 
@@ -1074,16 +1127,20 @@ class LoopController(context: Context) {
                  (it.kind == "cc" && event.kind == 0xb0))
         }
         if (isMappedGroup && event.channel != 0) return
-        val targets = tracks.filter { it.id in inputTargetIds }
+        val source = "midi:${event.deviceKey}:${event.deviceId}:${event.port}:${event.channel}"
         when (event.kind) {
-            0x80 -> targets.forEach { dispatchToTrack(it, NativeEngine.NOTE_OFF, event.data1, event.data2) }
-            0x90 -> targets.forEach { dispatchToTrack(it,
+            0x80 -> dispatchLiveInput(source, NativeEngine.NOTE_OFF, event.data1, event.data2)
+            0x90 -> dispatchLiveInput(source,
                 if (event.data2 == 0) NativeEngine.NOTE_OFF else NativeEngine.NOTE_ON,
-                event.data1, event.data2) }
+                event.data1, event.data2)
             0xb0 -> if (event.channel == 0 || midiRoutes.isEmpty())
-                targets.forEach { dispatchToTrack(it, NativeEngine.CONTROLLER, event.data1, event.data2) }
-            0xe0 -> targets.forEach { dispatchToTrack(it, NativeEngine.PITCH_BEND, 0,
-                event.data1 or (event.data2 shl 7)) }
+                tracks.filter { it.id in inputTargetIds }.forEach {
+                    dispatchToTrack(it, NativeEngine.CONTROLLER, event.data1, event.data2)
+                }
+            0xe0 -> tracks.filter { it.id in inputTargetIds }.forEach {
+                dispatchToTrack(it, NativeEngine.PITCH_BEND, 0,
+                    event.data1 or (event.data2 shl 7))
+            }
             // Program Change is diagnostic-only by default: it must not silently
             // overwrite the SoundFont preset chosen by the project.
         }
@@ -1381,9 +1438,11 @@ class LoopController(context: Context) {
     }
     @Synchronized fun selectTrack(id: Int) {
         if (tracks.any { it.id == id }) {
+            val previous = inputTargetIds.toSet()
             selectedId = id
             inputTargetIds.clear()
             inputTargetIds += id
+            releaseDepartedInputs(previous, inputTargetIds)
             changed()
         }
     }
