@@ -1013,6 +1013,10 @@ private fun PerformerScreen() {
                 Text("節拍器")
                 Switch(checked = loopState.metronome, onCheckedChange = looper::setMetronome)
             }
+            Text("節拍器音量：${loopState.metronomeVolume}/127")
+            Slider(value = loopState.metronomeVolume.toFloat(),
+                onValueChange = { looper.setMetronomeVolume(it.toInt()) },
+                valueRange = 0f..127f)
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
