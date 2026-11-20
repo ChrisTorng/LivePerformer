@@ -103,6 +103,7 @@ class LoopController(context: Context) {
     private var recordingTargets: Set<Int> = emptySet()
     private val tapTracker = TapTempoTracker()
     private var lastTapMillis = 0L
+    private var skipInitialTapClick = false
     private var nextMidiRouteId = 1
     @Volatile private var clockSender: ((Int) -> Unit)? = null
     @Volatile var masterVolumeFromMidi: ((Float) -> Unit)? = null
@@ -854,6 +855,7 @@ class LoopController(context: Context) {
                 }
             }
             if (metronome) emitClicks(lastScheduled, absoluteTick, false)
+            skipInitialTapClick = false
             lastScheduled = absoluteTick
         }
         if (now - lastPublishNs > 90_000_000L) { decayActivity(); publish() }
@@ -867,8 +869,9 @@ class LoopController(context: Context) {
         val firstBeat = (floor(from / beat) + 1) * beat
         if (firstBeat <= to) {
             val index = (firstBeat / beat).toLong()
-            NativeEngine.midi(NativeEngine.METRONOME_CLICK, 0,
-                if (index % beatsPerBar == 0L) 1 else 0, 0)
+            if (!(skipInitialTapClick && index == 0L))
+                NativeEngine.midi(NativeEngine.METRONOME_CLICK, 0,
+                    if (index % beatsPerBar == 0L) 1 else 0, 0)
         }
     }
 
@@ -900,6 +903,7 @@ class LoopController(context: Context) {
         lastClockIndex = -1L
         absoluteTick = 0.0
         lastScheduled = -0.01
+        skipInitialTapClick = false
         clockNs = now
         publish()
         save()
@@ -1456,7 +1460,9 @@ class LoopController(context: Context) {
     private fun startRecordingFromTap() {
         if (armedTrack == null) return
         absoluteTick = 0.0
-        lastScheduled = 0.01 // Fourth TAP already made a click.
+        // Preserve tick-zero notes of existing tracks while avoiding duplicate click.
+        lastScheduled = -0.01
+        skipInitialTapClick = true
         clockNs = System.nanoTime()
         playing = true
         countInActive = false
