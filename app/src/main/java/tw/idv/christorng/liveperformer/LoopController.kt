@@ -707,6 +707,10 @@ class LoopController(context: Context) {
         if (type == NativeEngine.NOTE_ON && velocity > 0 && track.id !in takeHasNotesByTrack) {
             // Replace, never overdub. Keep the previous recording through an empty pass.
             track.events.clear()
+            // An old expression curve might have left this synth channel quiet.
+            // Reset only when no new live CC11 gesture has been captured.
+            if (pendingExpressionByTrack[track.id].isNullOrEmpty())
+                NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 11, 127)
             heldRecordingNotesByTrack.remove(track.id)
             // Do not cut off a live note that began just before the downbeat.
             takeHasNotesByTrack += track.id
