@@ -11,12 +11,14 @@ class TapMultiRouteAndroidTest {
     private fun controller() = LoopController(
         InstrumentationRegistry.getInstrumentation().targetContext)
 
-    @Test fun tapRecordSkipsExtraCountInAndNormalRecordKeepsIt() {
+    @Test fun tapArmedRecordingStartsOnFourthTapWhileNormalPlayUsesCountIn() {
         val loop = controller()
         try {
             loop.newProject(true)
             assertTrue(loop.state.value.countInEnabled)
-            loop.setTapRecordArmed(true)
+            loop.recordPause()
+            assertTrue(loop.state.value.armed)
+            assertFalse(loop.state.value.playing)
             listOf(1_000L, 1_500L, 2_000L, 2_500L).forEach { loop.tapTempo(it) }
             assertEquals(120, loop.state.value.bpm)
             assertTrue(loop.state.value.recording)
@@ -25,8 +27,44 @@ class TapMultiRouteAndroidTest {
             loop.playStop()
             loop.recordPause()
             assertTrue(loop.state.value.armed)
-            assertFalse(loop.state.value.recording)
+            assertFalse(loop.state.value.playing)
+            loop.playStop()
+            Thread.sleep(35)
             assertTrue(loop.state.value.countInBeatsLeft > 0)
+        } finally {
+            loop.newProject(false)
+            loop.close()
+        }
+    }
+
+    @Test fun continuousReplaceKeepsOldTakeThroughSilentPasses() {
+        val loop = controller()
+        try {
+            loop.newProject(true)
+            loop.setCountInEnabled(false)
+            loop.setBars(1)
+            loop.setBpm(240) // A four-beat loop lasts one second.
+            val piano = loop.state.value.tracks.first { it.name == "鋼琴" }
+            loop.recordPause()
+            assertTrue(loop.state.value.armed)
+            assertFalse(loop.state.value.playing)
+            loop.playStop()
+            Thread.sleep(25)
+            assertTrue(loop.state.value.recording)
+            loop.onMidi(NativeEngine.NOTE_ON, 0, 60, 100)
+            loop.onMidi(NativeEngine.NOTE_OFF, 0, 60, 0)
+            Thread.sleep(1150)
+            assertTrue("recording must not auto-stop after one loop", loop.state.value.recording)
+            assertEquals(1, loop.state.value.tracks.first { it.id == piano.id }.notes)
+            // Empty next pass retains old loop notes and keeps playing.
+            Thread.sleep(1050)
+            assertTrue(loop.state.value.recording)
+            assertEquals(1, loop.state.value.tracks.first { it.id == piano.id }.notes)
+            loop.onMidi(NativeEngine.NOTE_ON, 0, 64, 100)
+            loop.onMidi(NativeEngine.NOTE_OFF, 0, 64, 0)
+            assertEquals(1, loop.state.value.tracks.first { it.id == piano.id }.notes)
+            loop.recordPause()
+            assertFalse(loop.state.value.recording)
         } finally {
             loop.newProject(false)
             loop.close()
