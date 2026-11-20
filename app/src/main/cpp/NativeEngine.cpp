@@ -333,15 +333,17 @@ public:
             output[2*i+1] += signal;
         }
         testSamples_.store(remaining, std::memory_order_relaxed);
-        // Mix after FluidSynth: click level is not tied to an instrument's sample
-        // loudness, mixer volume or recorded expression automation.
+        // Mix after FluidSynth: no SF2 sample/track CC7/CC11 attenuation.
+        // K8 master gain still controls both instruments and the metronome.
+        const float masterClickScale = std::clamp(
+            gain_.load(std::memory_order_relaxed) / 0.8f, 0.0f, 1.5f);
         for (int i = 0; i < frames && clickRemaining_ > 0; ++i) {
             const int elapsed = clickTotal_ - clickRemaining_;
             const float progress = static_cast<float>(clickRemaining_) / clickTotal_;
             const float attack = std::min(1.0f,
                 static_cast<float>(elapsed) / std::max(1, sampleRate / 500));
             const float envelope = attack * progress * progress;
-            const float sample = clickAmplitude_ * envelope * std::sin(clickPhase_);
+            const float sample = clickAmplitude_ * masterClickScale * envelope * std::sin(clickPhase_);
             clickPhase_ += clickStep_;
             output[2*i] = std::clamp(output[2*i] + sample, -1.0f, 1.0f);
             output[2*i+1] = std::clamp(output[2*i+1] + sample, -1.0f, 1.0f);
