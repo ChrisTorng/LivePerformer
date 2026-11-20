@@ -214,6 +214,7 @@ fun PerformancePanel(
     val landscape = LocalConfiguration.current.orientation ==
         android.content.res.Configuration.ORIENTATION_LANDSCAPE
     var showVolume by remember { mutableStateOf(false) }
+    var showClickVolume by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val displayPrefs = remember(context) {
         context.getSharedPreferences("performer", android.content.Context.MODE_PRIVATE)
@@ -284,7 +285,19 @@ fun PerformancePanel(
                 if (state.playing) "停止" else "播放") { looper.playStop() }
             TransportButton(if (state.recording || state.armed) "■" else "●", "錄製",
                 recording = true) { looper.recordPause() }
-            MetronomeToggle(state.metronome) { looper.setMetronome(!state.metronome) }
+            Box {
+                MetronomeToggle(state.metronome) { looper.setMetronome(!state.metronome) }
+                DropdownMenu(expanded = showClickVolume,
+                    onDismissRequest = { showClickVolume = false }) {
+                    Column(Modifier.padding(10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("節拍器音量")
+                        VerticalGainSlider(state.metronomeVolume.toFloat(),
+                            { looper.setMetronomeVolume(it.roundToInt()) }, 127f)
+                    }
+                }
+            }
+            SmallAction("節拍音量", { showClickVolume = true })
             Column(Modifier.width(69.dp).height(50.dp).clickable { looper.tapTempo() },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceEvenly) {
@@ -360,7 +373,7 @@ fun PerformancePanel(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
-                                Modifier.width(27.dp).fillMaxHeight()
+                                Modifier.width(44.dp).fillMaxHeight()
                                     .clickable { looper.toggleInputTarget(track.id) }
                                     .pointerInput(track.id, dragThreshold) {
                                         detectDragGesturesAfterLongPress(
@@ -401,7 +414,8 @@ fun PerformancePanel(
                                     if (isSelected) showTrackMenu = true
                                     else looper.selectTrack(track.id)
                                 }, contentAlignment = Alignment.CenterStart) {
-                                    Text(track.name.ifBlank { track.category },
+                                    Text(if (track.volume == 0) "靜音量！${track.name}" else
+                                            track.name.ifBlank { track.category },
                                         modifier = Modifier.padding(horizontal = 3.dp),
                                         fontSize = 12.sp, fontWeight = FontWeight.Bold,
                                         maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -452,6 +466,10 @@ fun PerformancePanel(
                                     Column(Modifier.padding(10.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text(track.name, maxLines = 1)
+                                        if (track.volume == 0) Text("音量為 0：目前無聲")
+                                        TextButton(onClick = { looper.setTrackVolume(track.id, 100) }) {
+                                            Text("恢復預設音量 100")
+                                        }
                                         VerticalGainSlider(track.volume.toFloat(),
                                             { looper.setTrackVolume(track.id, it.roundToInt()) }, 127f)
                                     }
