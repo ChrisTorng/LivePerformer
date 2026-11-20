@@ -1152,10 +1152,10 @@ class LoopController(context: Context) {
                 if (event.data2 == 0) NativeEngine.NOTE_OFF else NativeEngine.NOTE_ON,
                 event.data1, event.data2, isMpkKeybed)
             0xb0 -> if (event.channel == 0 || midiRoutes.isEmpty())
-                tracks.filter { it.id in inputTargetIds }.forEach {
+                tracks.filter { it.id in keyboardDestinations(isMpkKeybed) }.forEach {
                     dispatchToTrack(it, NativeEngine.CONTROLLER, event.data1, event.data2)
                 }
-            0xe0 -> tracks.filter { it.id in inputTargetIds }.forEach {
+            0xe0 -> tracks.filter { it.id in keyboardDestinations(isMpkKeybed) }.forEach {
                 dispatchToTrack(it, NativeEngine.PITCH_BEND, 0,
                     event.data1 or (event.data2 shl 7))
             }
