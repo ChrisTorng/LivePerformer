@@ -220,3 +220,12 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - A recording that contains only Expression replaces the old CC11 automation for that track **without erasing previously recorded notes**. A take containing new notes still follows the existing replace-not-overdub note policy. A neutral Expression value at tick 0 and an automatic restoration to 127 at cycle end prevent expression attenuation from leaking into the next loop.
 - Recorded CC11 data is included in existing .lvp JSON event arrays as `[tick, 2, 11, value]`; old project files remain readable and CC7 remains a persistent mixer setting, not an event. SF2/GM drums remain mapped to note pitches only; controllers bypass drum-note mappings.
 - Regression tests cover the inverse mapping, raw non-quantized expression timing, and an Android expression-only recording that preserves an existing piano note take.
+
+## v0.4.18 — 持續循環 Replace 錄製、TAP 響拍及主畫面 MIDI 訊息
+
+- **錄製按鈕只會待錄**，不再自行啟動播放。停止狀態按「錄」→ 按「播放」時，依專案的 Count-in 設定進入錄製；按「錄」→ 按四次 **TAP**，第四次直接啟動錄製、不重複 Count-in。
+- 錄製不再於一輪結束後自動停止。每輪結束完成該輪資料並繼續錄製；無輸入的輪次原本音軌照播。第一個新 Note On 才取代整軌舊音符、立刻停止舊音軌的殘響，往後依本輪輸入儲存。要錄一段刻意的空白，可使用該軌 Mute／清除操作，錄製不會以「沒輸入」視為刪除。
+- 原「Tap 錄」按鈕取消，TAP 移至該位置，每按一下都播放一次節拍，第一下較強；音量較大的短促節拍聲由原生音訊輸出獨立混音，不受 SF2 鼓聲音量、CC7/CC11 影響。
+- 主畫面鍵盤上方新增即時 MIDI 訊息，包括外接鍵盤與螢幕觸控的 Note On/Off、CC、Pitch Bend 等，不需要開啟系統設定檢視。
+- K7 改成節拍器**開關**（CC 值 ≥64 開、<64 關）。新預設與歷史「K7 節拍器音量」匯入設定皆改用開關；主畫面與專案設定移除節拍器音量滑桿。K8 維持主音量。
+- **驗證**：CI 建置與自動化測試不等同 Galaxy A25 5G 實機音量、延遲及外接 MIDI 的驗證。
