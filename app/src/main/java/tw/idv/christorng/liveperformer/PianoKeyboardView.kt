@@ -46,8 +46,16 @@ class PianoKeyboardView(context: Context) : View(context) {
     private val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(250, 250, 248) }
     private val black = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(30, 34, 44) }
     private val pressed = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(89, 177, 209) }
-    private val velocityPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(180, 224, 66, 66)
+    // High-contrast, outlined horizontal velocity marks stay readable on both
+    // black keys and white keys even in the compact landscape monitor.
+    private val velocityLightKeyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(210, 35, 54)
+    }
+    private val velocityDarkKeyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(255, 215, 60)
+    }
+    private val velocityOutlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(22, 26, 34)
     }
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(64, 67, 71); style = Paint.Style.STROKE; strokeWidth = 1.5f
@@ -101,10 +109,17 @@ class PianoKeyboardView(context: Context) : View(context) {
             val strength = rawVelocity.coerceIn(1, 127) / 127f
             val margin = 5f * resources.displayMetrics.density
             val y = margin + (height - 2 * margin) * (1f - strength)
-            val markerHeight = 3f * resources.displayMetrics.density
+            val markerHeight = 4f * resources.displayMetrics.density
+            val outline = 1f * resources.displayMetrics.density
+            canvas.drawRoundRect(center - markerHalfWidth - outline,
+                y - markerHeight / 2f - outline,
+                center + markerHalfWidth + outline,
+                y + markerHeight / 2f + outline, markerHeight / 2f,
+                markerHeight / 2f, velocityOutlinePaint)
             canvas.drawRoundRect(center - markerHalfWidth, y - markerHeight / 2f,
                 center + markerHalfWidth, y + markerHeight / 2f,
-                markerHeight / 2f, markerHeight / 2f, velocityPaint)
+                markerHeight / 2f, markerHeight / 2f,
+                if (isWhite(note)) velocityLightKeyPaint else velocityDarkKeyPaint)
         }
     }
     private fun isPressed(note: Int): Boolean =

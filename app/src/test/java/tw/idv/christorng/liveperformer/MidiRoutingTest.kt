@@ -80,6 +80,70 @@ class MidiRoutingTest {
         assertEquals(false, physicalLatch.targetState(up, true))
     }
 
+    @Test fun threeArmedTracksDoNotAllReceiveKeyboardNotes() {
+        val routes = listOf(
+            MidiRoute(1, "mpk", 1, "note", 36, 43, 1, "drum-pads"),
+            MidiRoute(2, "mpk", 1, "note", 44, 51, 2, "scale", 36)
+        )
+        val allArmed = setOf(1, 2, 3)
+        assertEquals(setOf(3), InputRoutingPolicy.keyboardDestinations(
+            allArmed, routes, true, 1, 2))
+        assertEquals(setOf(3), InputRoutingPolicy.keyboardDestinations(
+            allArmed, routes, false, null, null))
+        assertEquals(allArmed, InputRoutingPolicy.keyboardDestinations(
+            allArmed, emptyList(), false, null, null))
+    }
+
+    @Test fun mpkFallbackPadTracksAlsoStayOutOfKeybedInput() {
+        assertEquals(setOf(3), InputRoutingPolicy.keyboardDestinations(
+            setOf(1, 2, 3), emptyList(), true, 1, 2))
+        assertEquals(setOf(1, 2, 3), InputRoutingPolicy.keyboardDestinations(
+            setOf(1, 2, 3), emptyList(), false, 1, 2))
+    }
+
+    @Test fun mpkJoystickCc11RestDoesNotPassThroughAsZeroExpression() {
+        val rest = message(0xb0, 11, 0)
+        val down = message(0xb0, 11, 127)
+        assertTrue(JoystickExpressionPolicy.needsNeutralExpression(rest, false))
+        assertTrue(JoystickExpressionPolicy.needsNeutralExpression(down, false))
+        // A deliberately configured MIDI route retains control of CC11.
+        assertFalse(JoystickExpressionPolicy.needsNeutralExpression(rest, true))
+        assertFalse(JoystickExpressionPolicy.needsNeutralExpression(
+            message(0xb0, 7, 0), false))
+        assertFalse(JoystickExpressionPolicy.needsNeutralExpression(
+            rest.copy(deviceName = "Other MIDI controller"), false))
+        assertFalse(JoystickExpressionPolicy.needsNeutralExpression(
+            rest.copy(status = 0xb1), false))
+    }
+
+    @Test fun rawKeybedMonitorIsIndependentOfSelectedDestinations() {
+        val monitor = MidiKeybedMonitor()
+        val press = message(0x90, 60, 107)
+        assertTrue(monitor.accept(press))
+        assertEquals(mapOf(60 to 107), monitor.velocities())
+        // Pad Note channel 2 must not replace the physical keyboard overlay.
+        assertFalse(monitor.accept(message(0x91, 44, 127)))
+        assertEquals(mapOf(60 to 107), monitor.velocities())
+        assertTrue(monitor.accept(message(0x90, 60, 0)))
+        assertTrue(monitor.velocities().isEmpty())
+        assertTrue(monitor.accept(message(0x90, 62, 72)))
+        assertTrue(monitor.accept(message(0x80, 62, 0)))
+        assertTrue(monitor.velocities().isEmpty())
+    }
+
+    @Test fun keybedMonitorKeepsOverlappingDeviceNotesUntilBothRelease() {
+        val monitor = MidiKeybedMonitor()
+        val first = message(0x90, 65, 80, "device-a")
+        val second = message(0x90, 65, 114, "device-b")
+        monitor.accept(first)
+        monitor.accept(second)
+        assertEquals(114, monitor.velocities()[65])
+        monitor.accept(first.copy(status = 0x80, data2 = 0))
+        assertEquals(114, monitor.velocities()[65])
+        monitor.accept(second.copy(status = 0x80, data2 = 0))
+        assertTrue(monitor.velocities().isEmpty())
+    }
+
     @Test fun previousMuteModeStillInterprets127And0AsAbsoluteState() {
         val old = MidiRoute(21, "mpk", 1, "cc", 28, 28, 1, "mute")
         assertEquals(true, old.targetState(message(0xb1, 28, 127), false))

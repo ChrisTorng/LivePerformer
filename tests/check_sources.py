@@ -276,5 +276,11 @@ assert 'lastMidi' not in activity
 focus = looper.split('fun selectTrack(id: Int)', 1)[1].split('fun addTrack(', 1)[0]
 assert 'inputTargetIds.clear()' in focus and 'inputTargetIds += id' in focus
 number_toggle = looper.split('fun toggleInputTarget(id: Int)', 1)[1].split('private fun isDrumTrack(', 1)[0]
-assert 'if (!inputTargetIds.add(id)) inputTargetIds.remove(id)' in number_toggle
+assert 'if (!inputTargetIds.add(id)) {' in number_toggle
+assert 'inputTargetIds.remove(id)' in number_toggle
+assert 'releaseLiveTrack(id)' in number_toggle
+assert 'InputRoutingPolicy.keyboardDestinations' in looper
+assert 'isCountInPreRoll' in looper and 'fun isCountInPreRoll' in math
+assert '"metronome-volume"' in looper
+print('PASS: Pad/keybed input isolation, stuck-note guard, pre-roll and K7 click volume')
 print('PASS: immersive mode, horizontal settings gain, compact stage faders and single/multi input selection')

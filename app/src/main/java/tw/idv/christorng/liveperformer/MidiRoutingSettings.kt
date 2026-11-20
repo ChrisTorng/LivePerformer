@@ -83,7 +83,7 @@ fun MidiRoutingSettings(
     }
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("主鍵盤仍彈奏選取音軌；Pad 和 CC 可鎖定至其他音軌。",
+        Text("主鍵盤只彈奏非 Pad 專用的已選輸入音軌；Pad 可獨立錄製。",
             style = MaterialTheme.typography.bodySmall)
         Text("Note Bank A：固定八鼓；Note Bank B：Bass 八個音階音。實機確認 CC Toggle 不干擾 Note 發音。",
             style = MaterialTheme.typography.bodySmall)
@@ -96,7 +96,8 @@ fun MidiRoutingSettings(
         Text("CC Bank A（20–27）：硬體 Momentary，每次按下切換 App 狀態；" +
             "播放、錄製、節拍器與前五軌 Solo。" +
             " CC Bank B（28–35）：硬體 Toggle，127 開／0 關；" +
-            "第 1–7 軌 Mute 與全部靜音。功能仍可逐條修改。",
+            "第 1–7 軌 Mute 與全部靜音。功能仍可逐條修改。\n" +
+            "Knob K1–K6：前六軌音量，K7：節拍器音量，K8：主音量。",
             style = MaterialTheme.typography.bodySmall)
         Text("Knob MIDI CC 起點（連續音量，Keybed/Controls Channel 1）",
             style = MaterialTheme.typography.labelLarge)
@@ -112,7 +113,7 @@ fun MidiRoutingSettings(
             { knobFirstCc = it.toInt() }, Modifier.fillMaxWidth())
         OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = {
             confirmControlsPreset = true
-        }) { Text("套用 CC A/B 控制與 8 Knob 音量", maxLines = 1) }
+        }) { Text("套用 CC A/B 控制與 K1–K8 音量", maxLines = 1) }
         if (confirmControlsPreset) {
             AlertDialog(
                 onDismissRequest = { confirmControlsPreset = false },
@@ -125,7 +126,7 @@ fun MidiRoutingSettings(
                     TextButton(onClick = {
                         confirmControlsPreset = false
                         feedback = if (looper.applyMpkMiniMk2ControlsPreset(deviceKey, knobFirstCc))
-                            "已安裝 CC A/B Toggle 控制與 8 Knob 音量對應"
+                            "已安裝 CC A/B 控制；K7 節拍器、K8 主音量"
                         else "MIDI 路由容量不足，無法套用預設"
                         onMessage(feedback)
                     }) { Text("取代舊 CC 設定") }
@@ -177,8 +178,8 @@ fun MidiRoutingSettings(
         }
         Text("目標音軌", style = MaterialTheme.typography.labelLarge)
         MidiChoice(state.tracks.firstOrNull { it.id == targetTrack }?.name ?:
-            if (targetTrack == 0) "主音量" else "請選擇音軌",
-            listOf("0" to "主音量") +
+            if (targetTrack == 0) "整體控制" else "請選擇音軌",
+            listOf("0" to "整體控制") +
                 state.tracks.map { it.id.toString() to
                     (it.name + "（Ch " + (it.channel + 1) + "）") },
             { targetTrack = it.toInt() }, Modifier.fillMaxWidth())
@@ -189,7 +190,8 @@ fun MidiRoutingSettings(
             "cc" -> listOf("note" to "CC → 指定首音（半音）",
                 "scale" to "CC → 調性音階", "custom" to "CC → 逐鍵指定",
                 "drum-pads" to "8 Pad 固定鼓聲功能",
-                "volume" to "指定音軌音量", "pan" to "左右平衡", "master" to "總音量",
+                "volume" to "指定音軌音量", "pan" to "左右平衡", "master" to "主音量（K8）",
+                "metronome-volume" to "節拍器音量（K7）",
                 "slot-volume" to "依音軌位置調整音量（Knob）",
                 "mute" to "指定軌 Mute", "solo" to "指定軌 Solo",
                 "slot-mute" to "第 1–7 軌 Mute",
@@ -209,7 +211,7 @@ fun MidiRoutingSettings(
             actions, { selected ->
                 action = selected
                 if (selected in setOf("play-stop", "record-toggle",
-                        "tap-tempo", "tap-record", "metronome-toggle", "next-track", "master", "mute-all",
+                        "tap-tempo", "tap-record", "metronome-toggle", "next-track", "master", "metronome-volume", "mute-all",
                         "slot-volume", "slot-mute", "slot-solo")) targetTrack = 0
                 else if (targetTrack == 0) targetTrack =
                     state.selectedId.takeIf { it != 0 } ?: state.tracks.firstOrNull()?.id ?: 0
@@ -346,7 +348,8 @@ fun MidiRoutingSettings(
         if (feedback.isNotBlank()) Text(feedback, style = MaterialTheme.typography.bodySmall)
         Text("CC Bank A 硬體 Momentary → 軟體切換，CC Bank B 硬體 Toggle → 依 127／0 設定開關。" +
             "Note A/B 不做額外按鍵鎖定。搖桿 Y AXIS 的「CC 2」代表雙 CC 模式，" +
-            "向上送 CC1、向下送 CC11，不會與 Knob K1 的 CC2 衝突。",
+            "向上送 CC1、向下送 CC11；CC11 回中值 0 會使標準表情音量歸零，" +
+            "因此預設會保持表情音量 127，只有明確自訂 CC11 路由才會依其設定執行。",
             style = MaterialTheme.typography.bodySmall)
         HorizontalDivider()
         Text("已儲存的 MIDI 路由：" + state.midiRoutes.size,

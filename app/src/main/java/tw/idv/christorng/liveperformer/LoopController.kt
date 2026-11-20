@@ -35,6 +35,7 @@ data class LoopView(
     val beatUnit: Int,
     val quantizeDivision: Int,
     val metronome: Boolean,
+    val metronomeVolume: Int,
     val playing: Boolean,
     val armed: Boolean,
     val recording: Boolean,
@@ -103,6 +104,7 @@ class LoopController(context: Context) {
     private var nextMidiRouteId = 1
     @Volatile private var clockSender: ((Int) -> Unit)? = null
     @Volatile var masterVolumeFromMidi: ((Float) -> Unit)? = null
+    private val liveInputOwners = mutableMapOf<String, MutableSet<Int>>()
     private var lastClockIndex = -1L
 
     fun setClockSender(sender: ((Int) -> Unit)?) { clockSender = sender }
@@ -111,6 +113,7 @@ class LoopController(context: Context) {
     private val fontTitles = mutableMapOf<String, String>()
     private val keysDown = mutableMapOf<Int, MutableSet<Int>>()
     private val keyVelocities = mutableMapOf<Int, MutableMap<Int, Int>>()
+    private val physicalKeybed = MidiKeybedMonitor()
     private val scheduler = ScheduledThreadPoolExecutor(1) { command ->
         Thread(command, "LivePerformer-Loop").apply { priority = Thread.MAX_PRIORITY - 1 }
     }
@@ -121,6 +124,7 @@ class LoopController(context: Context) {
     private var quantizeDivision = 16
     private var hasUnsavedChanges = true
     private var metronome = true
+    private var metronomeVolume = 100
     private var countInEnabled = true
     private var countInBars = 1
     private var countInActive = false
@@ -162,6 +166,7 @@ class LoopController(context: Context) {
         beatUnit = 4
         quantizeDivision = 16
         metronome = true
+        metronomeVolume = 100
         countInEnabled = true
         countInBars = 1
         countInActive = false
@@ -227,12 +232,15 @@ class LoopController(context: Context) {
         keysDown.clear()
         keyVelocities.clear()
         NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
+        liveInputOwners.clear()
+        physicalKeybed.clear()
         bpm = 120
         bars = 2
         beatsPerBar = 4
         beatUnit = 4
         quantizeDivision = 16
         metronome = true
+        metronomeVolume = 100
         countInEnabled = true
         countInBars = 1
         countInActive = false
@@ -273,6 +281,8 @@ class LoopController(context: Context) {
         keyVelocities.clear()
         countInActive = false
         NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
+        liveInputOwners.clear()
+        physicalKeybed.clear()
         absoluteTick = 0.0
         lastScheduled = -0.01
         clockNs = System.nanoTime()
@@ -355,6 +365,8 @@ class LoopController(context: Context) {
             takeHasNotes = false
             keysDown.clear()
             keyVelocities.clear()
+            liveInputOwners.clear()
+            physicalKeybed.clear()
             absoluteTick = 0.0
             lastScheduled = -0.01
             clockNs = System.nanoTime()
@@ -366,6 +378,7 @@ class LoopController(context: Context) {
             .takeIf { it in LoopMath.supportedQuantization } ?: 16
         bpm = root.optInt("bpm", 120).coerceIn(40, 240)
         metronome = root.optBoolean("metronome", true)
+        metronomeVolume = root.optInt("metronomeVolume", 100).coerceIn(0, 127)
         countInEnabled = root.optBoolean("countInEnabled", true)
         countInBars = root.optInt("countInBars", 1).coerceIn(1, 2)
         selectedId = root.optInt("selectedId", newTracks.firstOrNull()?.id ?: 0)
@@ -396,17 +409,22 @@ class LoopController(context: Context) {
     private fun decodeMidiRoutes(routeArray: JSONArray): List<MidiRoute> {
         val importedRoutes = mutableListOf<MidiRoute>()
         require(routeArray.length() <= 64) { "MIDI 路由超過上限" }
-        val knownActions = setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "select-track", "tap-tempo", "tap-record",
+        val knownActions = setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "metronome-volume", "select-track", "tap-tempo", "tap-record",
             "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track",
             "slot-volume", "slot-mute", "slot-solo", "mute-all")
         for (index in 0 until routeArray.length()) {
             val item = routeArray.getJSONObject(index)
             val kind = item.optString("kind", "note")
-            val action = item.optString("action", "note")
+            val originalAction = item.optString("action", "note")
             val first = item.optInt("first")
             val last = item.optInt("last", 127)
             val ch = item.optInt("channel", -1)
             val trackId = item.optInt("trackId")
+            val source = item.optString("deviceKey", "*")
+            val action = if (originalAction == "slot-volume" && kind == "cc" &&
+                ch == 0 && trackId == 0 && item.optInt("noteBase", -1) == 6 &&
+                first == last && first == defaultKnobFirstCc(source) + 6)
+                "metronome-volume" else originalAction
             require(kind in setOf("note", "cc", "program") &&
                 action in knownActions && first in 0..127 && last in first..127 &&
                 ch in -1..15 && item.optString("deviceKey", "*").length <= 256) {
@@ -478,7 +496,7 @@ class LoopController(context: Context) {
             .put("bpm", bpm).put("bars", bars)
             .put("beatsPerBar", beatsPerBar).put("beatUnit", beatUnit)
             .put("quantizeDivision", quantizeDivision)
-            .put("metronome", metronome)
+            .put("metronome", metronome).put("metronomeVolume", metronomeVolume)
             .put("countInEnabled", countInEnabled).put("countInBars", countInBars)
             .put("selectedId", selectedId).put("nextId", nextId)
             .put("inputTargetIds", JSONArray(inputTargetIds.toList()))
@@ -555,13 +573,15 @@ class LoopController(context: Context) {
         val countLeft = if (countInActive) kotlin.math.ceil(
             (countInBars * LoopMath.barTicks(beatsPerBar, beatUnit) - countInProgress) / beatSize
         ).toInt().coerceAtLeast(1) else 0
-        val inputVelocities = mutableMapOf<Int, Int>()
+        // Display the physical keybed's MIDI input even if an instrument is
+        // muted, pad-only, or not a recording destination.
+        val inputVelocities = physicalKeybed.velocities().toMutableMap()
         tracks.filter { it.id in inputTargetIds }.forEach { track ->
             keyVelocities[track.channel]?.forEach { (pitch, velocity) ->
                 inputVelocities[pitch] = maxOf(inputVelocities[pitch] ?: 0, velocity)
             }
         }
-        return LoopView(bpm, bars, beatsPerBar, beatUnit, quantizeDivision, metronome, playing, armedTrack != null,
+        return LoopView(bpm, bars, beatsPerBar, beatUnit, quantizeDivision, metronome, metronomeVolume, playing, armedTrack != null,
             recordingTrack != null, selectedId, inputTargetIds.toSet(),
             at / LoopMath.barTicks(beatsPerBar, beatUnit) + 1,
             (at / LoopMath.beatTicks(beatUnit)) % beatsPerBar + 1, at.toFloat() / length,
@@ -768,7 +788,9 @@ class LoopController(context: Context) {
         val firstBeat = (floor(from / beat) + 1) * beat
         if (firstBeat <= to) {
             val index = (firstBeat / beat).toLong()
-            NativeEngine.noteOn(if (index % beatsPerBar == 0L) 76 else 77, 82, 9)
+            val clickVelocity = (82 * metronomeVolume / 100f).toInt().coerceIn(0, 127)
+            if (clickVelocity > 0) NativeEngine.noteOn(
+                if (index % beatsPerBar == 0L) 76 else 77, clickVelocity, 9)
         }
         val off = (floor((from - 96) / beat) + 1) * beat + 96
         if (off <= to) NativeEngine.noteOff(
@@ -784,6 +806,8 @@ class LoopController(context: Context) {
             playing = false
             countInActive = false
             NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
+            liveInputOwners.clear()
+            physicalKeybed.clear()
             keysDown.clear()
             keyVelocities.clear()
             resetActivity()
@@ -838,21 +862,86 @@ class LoopController(context: Context) {
         val t = tracks.firstOrNull { it.id == id } ?: return
         if (t.id in recordingTargets || t.id in armedTargets) stopRecord(absoluteTick)
         t.events.clear()
-        t.heldVelocities.clear()
-        t.activityLevel = 0f
-        NativeEngine.midi(NativeEngine.CONTROLLER, t.channel, 123, 0)
+        releaseLiveTrack(t.id)
         changed()
     }
 
-    /** Touch keyboard plays all selected input destinations; explicit hardware pad routes remain independent. */
+    /** Pad routes stay armed while keybed input is restricted to melody tracks. */
+    private fun keyboardDestinations(sourceIsMpk: Boolean): Set<Int> =
+        InputRoutingPolicy.keyboardDestinations(
+            inputTargetIds, midiRoutes, sourceIsMpk,
+            tracks.firstOrNull(::isDrumTrack)?.id,
+            tracks.firstOrNull {
+                it.name.contains("Bass", ignoreCase = true) ||
+                    it.name.contains("貝斯") || it.category == "貝斯"
+            }?.id
+        )
+
+    /** Note release follows the original track even when focus has changed. */
+    private fun dispatchLiveInput(
+        source: String, type: Int, note: Int, velocity: Int, sourceIsMpk: Boolean = false
+    ) {
+        val noteType = if (type == NativeEngine.NOTE_ON && velocity == 0)
+            NativeEngine.NOTE_OFF else type
+        val key = "${source}:${note}"
+        val destinations: Set<Int> = when (noteType) {
+            NativeEngine.NOTE_ON -> {
+                val ids = keyboardDestinations(sourceIsMpk)
+                liveInputOwners.remove(key)?.forEach { id ->
+                    tracks.firstOrNull { it.id == id }?.let {
+                        dispatchToTrack(it, NativeEngine.NOTE_OFF, note, 0)
+                    }
+                }
+                if (ids.isNotEmpty()) liveInputOwners[key] = ids.toMutableSet()
+                ids
+            }
+            NativeEngine.NOTE_OFF -> liveInputOwners.remove(key).orEmpty()
+            else -> keyboardDestinations(sourceIsMpk)
+        }
+        tracks.filter { it.id in destinations }.forEach {
+            dispatchToTrack(it, noteType, note, velocity)
+        }
+    }
+
+    /** Touch keyboard plays the selected input destinations. */
     @Synchronized fun onMidi(type: Int, originalChannel: Int, a: Int, b: Int) {
-        tracks.filter { it.id in inputTargetIds }.forEach { dispatchToTrack(it, type, a, b) }
+        dispatchLiveInput("touch:${originalChannel}", type, a, b)
+    }
+
+    /** Stop only this channel, not the other tracks or the entire synthesizer. */
+    private fun releaseLiveTrack(id: Int) {
+        val track = tracks.firstOrNull { it.id == id } ?: return
+        advance(System.nanoTime())
+        updateRecording()
+        heldRecordingNotesByTrack[id]?.toList()?.forEach { note ->
+            capture(track, NativeEngine.NOTE_OFF, note, 0, absoluteTick)
+        }
+        NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 64, 0)
+        NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 120, 0)
+        NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 11, 127)
+        keysDown.remove(track.channel)
+        keyVelocities.remove(track.channel)
+        track.heldVelocities.clear()
+        track.activityLevel = 0f
+        val iterator = liveInputOwners.iterator()
+        while (iterator.hasNext()) {
+            val owner = iterator.next()
+            owner.value.remove(id)
+            if (owner.value.isEmpty()) iterator.remove()
+        }
+    }
+
+    private fun releaseDepartedInputs(previous: Set<Int>, current: Set<Int>) {
+        (previous - current).forEach(::releaseLiveTrack)
     }
 
     /** Numbered track handles toggle additional input targets without changing the focused track. */
     @Synchronized fun toggleInputTarget(id: Int) {
         if (tracks.none { it.id == id }) return
-        if (!inputTargetIds.add(id)) inputTargetIds.remove(id)
+        if (!inputTargetIds.add(id)) {
+            inputTargetIds.remove(id)
+            releaseLiveTrack(id)
+        }
         changed()
     }
 
@@ -872,6 +961,10 @@ class LoopController(context: Context) {
 
     /** Record canonical GM drum roles, translate only when sending to synth. */
     private fun dispatchToTrack(track: Track, type: Int, a: Int, b: Int) {
+        if (type == NativeEngine.CONTROLLER && a == 7) {
+            setTrackVolume(track.id, b)
+            return
+        }
         advance(System.nanoTime())
         updateRecording()
         if (type == NativeEngine.NOTE_ON || type == NativeEngine.NOTE_OFF) {
@@ -879,6 +972,12 @@ class LoopController(context: Context) {
             val velocity = b.coerceIn(0, 127)
             if (track.id in recordingTargets) {
                 capture(track, type, note, velocity, absoluteTick)
+            } else if (countInActive && track.id in armedTargets &&
+                LoopMath.isCountInPreRoll(countInProgress,
+                    countInBars * LoopMath.barTicks(beatsPerBar, beatUnit), quantizeDivision)) {
+                preRollEvents += Captured(track.id,
+                    countInProgress - countInBars * LoopMath.barTicks(beatsPerBar, beatUnit),
+                    type, note, velocity)
             } else if (!countInActive && track.id in armedTargets &&
                 absoluteTick >= armedAt - LoopMath.preRollTicks(quantizeDivision) &&
                 absoluteTick < armedAt) {
@@ -922,22 +1021,36 @@ class LoopController(context: Context) {
         if (event.channel == 0 && number in firstKnob..(firstKnob + 7)) {
             val hasEditedKnobs = midiRoutes.any {
                 sameDevice(it) && it.kind == "cc" && it.channel in setOf(-1, 0) &&
-                    it.action in setOf("slot-volume", "master")
+                    it.action in setOf("slot-volume", "metronome-volume", "master")
             }
             if (hasEditedKnobs) return null
             val slot = number - firstKnob
             return MidiRoute(-1, event.deviceKey, 0, "cc", number, number, 0,
-                if (slot < 7) "slot-volume" else "master",
-                if (slot < 7) slot else -1)
+                when (slot) {
+                    in 0..5 -> "slot-volume"
+                    6 -> "metronome-volume"
+                    else -> "master"
+                }, if (slot < 6) slot else -1)
         }
         return null
     }
 
     /** Physical source channel is independent from the synth's assigned track channel. */
     @Synchronized fun onExternalMidi(event: MidiEvent) {
+        if (physicalKeybed.accept(event)) publish()
         val configured = midiRoutes.filter { it.matches(event) }
         val routes = if (configured.isNotEmpty()) configured
             else defaultMpkCcRoute(event)?.let { listOf(it) } ?: emptyList()
+        // MPK's downward joystick sends CC11=127 and returns to CC11=0 at
+        // centre. MIDI CC11 is persistent Expression (0=inaudible), not a
+        // momentary modulation. Without an explicit route, neutralize this
+        // hardware-specific control so it cannot silence the entire track.
+        if (JoystickExpressionPolicy.needsNeutralExpression(event, routes.isNotEmpty())) {
+            tracks.filter { it.id in keyboardDestinations(true) }.forEach {
+                NativeEngine.midi(NativeEngine.CONTROLLER, it.channel, 11, 127)
+            }
+            return
+        }
         if (routes.isNotEmpty()) {
             for (route in routes) {
                 val track = tracks.firstOrNull { it.id == route.trackId }
@@ -965,6 +1078,7 @@ class LoopController(context: Context) {
                             else setTrackVolume(target.id, event.data2)
                         }
                     }
+                    "metronome-volume" -> setMetronomeVolume(event.data2)
                     "master" -> masterVolumeFromMidi?.invoke(
                         event.data2.coerceIn(0, 127) / 127f * 1.5f)
                     "mute", "slot-mute" -> {
@@ -1047,16 +1161,23 @@ class LoopController(context: Context) {
                  (it.kind == "cc" && event.kind == 0xb0))
         }
         if (isMappedGroup && event.channel != 0) return
-        val targets = tracks.filter { it.id in inputTargetIds }
+        val source = "midi:${event.deviceKey}:${event.deviceId}:${event.port}:${event.channel}"
+        val isMpkKeybed = event.channel == 0 &&
+            event.deviceName.contains("MPK", ignoreCase = true)
         when (event.kind) {
-            0x80 -> targets.forEach { dispatchToTrack(it, NativeEngine.NOTE_OFF, event.data1, event.data2) }
-            0x90 -> targets.forEach { dispatchToTrack(it,
+            0x80 -> dispatchLiveInput(source, NativeEngine.NOTE_OFF,
+                event.data1, event.data2, isMpkKeybed)
+            0x90 -> dispatchLiveInput(source,
                 if (event.data2 == 0) NativeEngine.NOTE_OFF else NativeEngine.NOTE_ON,
-                event.data1, event.data2) }
+                event.data1, event.data2, isMpkKeybed)
             0xb0 -> if (event.channel == 0 || midiRoutes.isEmpty())
-                targets.forEach { dispatchToTrack(it, NativeEngine.CONTROLLER, event.data1, event.data2) }
-            0xe0 -> targets.forEach { dispatchToTrack(it, NativeEngine.PITCH_BEND, 0,
-                event.data1 or (event.data2 shl 7)) }
+                tracks.filter { it.id in keyboardDestinations(isMpkKeybed) }.forEach {
+                    dispatchToTrack(it, NativeEngine.CONTROLLER, event.data1, event.data2)
+                }
+            0xe0 -> tracks.filter { it.id in keyboardDestinations(isMpkKeybed) }.forEach {
+                dispatchToTrack(it, NativeEngine.PITCH_BEND, 0,
+                    event.data1 or (event.data2 shl 7))
+            }
             // Program Change is diagnostic-only by default: it must not silently
             // overwrite the SoundFont preset chosen by the project.
         }
@@ -1072,17 +1193,17 @@ class LoopController(context: Context) {
         if ((id == null && midiRoutes.size >= 48) || (id != null && midiRoutes.none { it.id == id }) ||
             deviceKey.length > 256 || channel !in -1..15 ||
             kind !in setOf("note", "cc", "program") ||
-            action !in setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "select-track", "tap-tempo", "tap-record",
+            action !in setOf("note", "scale", "custom", "drum-pads", "volume", "pan", "master", "metronome-volume", "select-track", "tap-tempo", "tap-record",
                 "mute", "solo", "play-stop", "record-toggle", "metronome-toggle", "next-track",
                 "slot-volume", "slot-mute", "slot-solo", "mute-all") ||
             (kind == "program" && action != "select-track") ||
             (kind != "program" && action == "select-track") ||
-            (action in setOf("volume", "pan", "master", "mute", "solo",
+            (action in setOf("volume", "pan", "master", "metronome-volume", "mute", "solo",
                 "play-stop", "record-toggle", "metronome-toggle", "next-track", "tap-tempo", "tap-record",
                 "slot-volume", "slot-mute", "slot-solo", "mute-all") && kind != "cc") ||
             first !in 0..127 || last !in first..127 ||
             (trackId != 0 && tracks.none { it.id == trackId }) ||
-            (trackId == 0) != (action in setOf("master", "play-stop", "record-toggle",
+            (trackId == 0) != (action in setOf("master", "metronome-volume", "play-stop", "record-toggle",
                 "metronome-toggle", "next-track", "tap-tempo", "tap-record", "slot-volume", "slot-mute", "slot-solo", "mute-all")) ||
             noteBase !in -1..127 || scaleMode !in MidiPitch.modes ||
             ccMode !in MidiRoute.ccModes ||
@@ -1196,7 +1317,7 @@ class LoopController(context: Context) {
             matchesDevice(r) && r.kind == "cc" &&
                 ((r.channel in setOf(-1, 1) && r.first <= 35 && r.last >= 20) ||
                  (r.channel in setOf(-1, 0) &&
-                     (r.action in setOf("slot-volume", "master") ||
+                     (r.action in setOf("slot-volume", "metronome-volume", "master") ||
                       (r.first <= firstKnobCc + 7 && r.last >= firstKnobCc))))
         }
         // Slot targets are positions in the current performance track order.
@@ -1212,9 +1333,11 @@ class LoopController(context: Context) {
         for ((number, action, slot) in assignments)
             proposed += MidiRoute(next++, deviceKey, 1, "cc", number, number,
                 0, action, slot, ccMode = if (number <= 27) "press-toggle" else "absolute")
-        for (slot in 0..6)
+        for (slot in 0..5)
             proposed += MidiRoute(next++, deviceKey, 0, "cc",
                 firstKnobCc + slot, firstKnobCc + slot, 0, "slot-volume", slot)
+        proposed += MidiRoute(next++, deviceKey, 0, "cc",
+            firstKnobCc + 6, firstKnobCc + 6, 0, "metronome-volume")
         proposed += MidiRoute(next++, deviceKey, 0, "cc",
             firstKnobCc + 7, firstKnobCc + 7, 0, "master")
         if (remainder.size + proposed.size > 48) return false
@@ -1323,6 +1446,12 @@ class LoopController(context: Context) {
         metronome = value
         changed()
     }
+    @Synchronized fun setMetronomeVolume(value: Int) {
+        val next = value.coerceIn(0, 127)
+        if (metronomeVolume == next) return
+        metronomeVolume = next
+        changed()
+    }
     @Synchronized fun setCountInEnabled(value: Boolean) {
         countInEnabled = value
         changed()
@@ -1346,9 +1475,11 @@ class LoopController(context: Context) {
     }
     @Synchronized fun selectTrack(id: Int) {
         if (tracks.any { it.id == id }) {
+            val previous = inputTargetIds.toSet()
             selectedId = id
             inputTargetIds.clear()
             inputTargetIds += id
+            releaseDepartedInputs(previous, inputTargetIds)
             changed()
         }
     }
@@ -1360,9 +1491,11 @@ class LoopController(context: Context) {
         val id = nextId++
         tracks += Track(id, channel, if (drums) "鼓組 $id" else "樂器 $id",
             if (drums) 128 else 0, 0)
+        val previous = inputTargetIds.toSet()
         selectedId = id
         inputTargetIds.clear()
         inputTargetIds += id
+        releaseDepartedInputs(previous, inputTargetIds)
         tracks.last().category = if (drums) "鼓組" else "鋼琴"
         if (!drums) NativeEngine.selectFontPreset(channel, 0, 0, 0)
         changed()
@@ -1383,9 +1516,11 @@ class LoopController(context: Context) {
             fontId = fontId.takeIf { it in fontIndexes } ?: "gm",
             category = category)
         tracks += track
+        val previous = inputTargetIds.toSet()
         selectedId = id
         inputTargetIds.clear()
         inputTargetIds += id
+        releaseDepartedInputs(previous, inputTargetIds)
         NativeEngine.selectFontPreset(channel, fontIndexes[track.fontId] ?: 0, track.bank, track.program)
         changed()
         return true
@@ -1412,18 +1547,14 @@ class LoopController(context: Context) {
     private fun silenceInaudibleTracks() {
         val anySolo = tracks.any { it.solo }
         tracks.filter { it.muted || (anySolo && !it.solo) }.forEach {
-            NativeEngine.midi(NativeEngine.CONTROLLER, it.channel, 123, 0)
-            keysDown.remove(it.channel)
-            keyVelocities.remove(it.channel)
+            releaseLiveTrack(it.id)
         }
     }
 
     @Synchronized fun removeTrack(id: Int) {
         val track = tracks.firstOrNull { it.id == id } ?: return
         if (id in recordingTargets || id in armedTargets) stopRecord(absoluteTick)
-        NativeEngine.midi(NativeEngine.CONTROLLER, track.channel, 123, 0)
-        keysDown.remove(track.channel)
-        keyVelocities.remove(track.channel)
+        releaseLiveTrack(track.id)
         tracks.remove(track)
         midiRoutes.removeAll { it.trackId == id }
         silenceInaudibleTracks()
@@ -1459,6 +1590,7 @@ class LoopController(context: Context) {
     }
     @Synchronized fun setPreset(bank: Int, program: Int) {
         val track = tracks.firstOrNull { it.id == selectedId } ?: return
+        releaseLiveTrack(track.id)
         track.bank = bank
         track.program = program
         if (track.fontId == "gm" && track.channel != 9) {
@@ -1480,6 +1612,7 @@ class LoopController(context: Context) {
     ) {
         val track = tracks.firstOrNull { it.id == selectedId } ?: return
         if (fontId !in fontIndexes) return
+        releaseLiveTrack(track.id)
         track.fontId = fontId
         track.bank = bank
         track.program = program.coerceIn(0, 127)
@@ -1504,13 +1637,17 @@ class LoopController(context: Context) {
     @Synchronized fun setFont(fontId: String) {
         val t = tracks.firstOrNull { it.id == selectedId } ?: return
         if (!fontIndexes.containsKey(fontId)) return
+        releaseLiveTrack(t.id)
         t.fontId = fontId
         recoverInstrumentName(t)
         NativeEngine.selectFontPreset(t.channel, fontIndexes[fontId] ?: 0, t.bank, t.program)
         changed()
     }
     @Synchronized fun replaceFont(oldId: String, replacementId: String = "gm") {
-        tracks.filter { it.fontId == oldId }.forEach { it.fontId = replacementId }
+        tracks.filter { it.fontId == oldId }.forEach {
+            releaseLiveTrack(it.id)
+            it.fontId = replacementId
+        }
         refreshPrograms()
         changed()
     }
@@ -1533,6 +1670,9 @@ class LoopController(context: Context) {
                 t.bank, t.program
             )
             NativeEngine.midi(NativeEngine.CONTROLLER, t.channel, 7, t.volume)
+            // Expression is an independent persistent gain controller.
+            // Keep it at full volume unless the user explicitly routes CC11.
+            NativeEngine.midi(NativeEngine.CONTROLLER, t.channel, 11, 127)
         }
     }
 

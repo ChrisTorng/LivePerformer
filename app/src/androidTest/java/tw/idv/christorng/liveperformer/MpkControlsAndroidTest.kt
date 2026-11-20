@@ -30,7 +30,7 @@ class MpkControlsAndroidTest {
             assertEquals(expectedB, (28..35).map { number ->
                 cc.single { it.first == number && it.channel == 1 }.action
             })
-            assertEquals(List(7) { "slot-volume" } + "master",
+            assertEquals(List(6) { "slot-volume" } + listOf("metronome-volume", "master"),
                 (2..9).map { number ->
                     cc.single { it.first == number && it.channel == 0 }.action
                 })
@@ -61,6 +61,8 @@ class MpkControlsAndroidTest {
             })
             assertEquals("slot-volume",
                 current.single { it.kind == "cc" && it.channel == 0 && it.first == 2 }.action)
+            assertEquals("metronome-volume",
+                current.single { it.kind == "cc" && it.channel == 0 && it.first == 8 }.action)
             assertEquals("master",
                 current.single { it.kind == "cc" && it.channel == 0 && it.first == 9 }.action)
         } finally {

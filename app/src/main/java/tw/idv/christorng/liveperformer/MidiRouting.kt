@@ -94,3 +94,74 @@ object MidiPitch {
     fun name(number: Int): String =
         if (number !in 0..127) "—" else names[number % 12] + (number / 12 - 1)
 }
+
+
+/** Recording armed tracks and playable keyboard destinations are separate concepts. */
+object InputRoutingPolicy {
+    fun keyboardDestinations(
+        armedIds: Set<Int>,
+        routes: List<MidiRoute>,
+        sourceIsMpk: Boolean,
+        defaultDrumId: Int?,
+        defaultBassId: Int?
+    ): Set<Int> {
+        val padTargets = routes.asSequence().filter {
+            it.trackId != 0 && it.action in setOf("note", "scale", "custom", "drum-pads") &&
+                ((it.kind == "note" && it.channel == 1 && it.first in 36..51 &&
+                    it.last in 36..51) ||
+                 (it.kind == "cc" && it.first in 20..35 && it.last in 20..35))
+        }.map { it.trackId }.toMutableSet()
+        if (sourceIsMpk) {
+            if (defaultDrumId != null) padTargets.add(defaultDrumId)
+            if (defaultBassId != null) padTargets.add(defaultBassId)
+        }
+        return armedIds - padTargets
+    }
+}
+
+
+/**
+ * The keyboard monitor observes physical NoteOn/NoteOff independently of recording
+ * destinations, mute/solo, or SoundFont expression (CC11).
+ * MPK's keybed uses MIDI channel 1 (zero-based channel 0); pad Note banks use 2.
+ */
+class MidiKeybedMonitor {
+    private val bySource = mutableMapOf<String, MutableMap<Int, Int>>()
+
+    fun accept(event: MidiEvent): Boolean {
+        if (event.channel != 0 || event.kind !in setOf(0x80, 0x90)) return false
+        val source = "${event.deviceKey}:${event.deviceId}:${event.port}"
+        val note = event.data1
+        if (note !in 0..127) return false
+        val down = event.kind == 0x90 && event.data2 > 0
+        if (down) {
+            bySource.getOrPut(source) { mutableMapOf() }[note] =
+                event.data2.coerceIn(1, 127)
+        } else {
+            bySource[source]?.remove(note)
+            if (bySource[source]?.isEmpty() == true) bySource.remove(source)
+        }
+        return true
+    }
+
+    fun velocities(): Map<Int, Int> {
+        val result = mutableMapOf<Int, Int>()
+        bySource.values.forEach { notes ->
+            notes.forEach { (note, velocity) ->
+                result[note] = maxOf(result[note] ?: 0, velocity)
+            }
+        }
+        return result
+    }
+
+    fun clear() = bySource.clear()
+}
+
+
+/** MPK down-joystick CC11 is 0 at rest. Passing that through as standard
+ * Expression would permanently silence the synth until CC11=127 arrived. */
+object JoystickExpressionPolicy {
+    fun needsNeutralExpression(event: MidiEvent, hasMatchedRoute: Boolean): Boolean =
+        !hasMatchedRoute && event.kind == 0xb0 && event.channel == 0 &&
+            event.data1 == 11 && event.deviceName.contains("MPK", ignoreCase = true)
+}

@@ -35,6 +35,18 @@ class LoopMathTest {
         assertEquals(length - 1, LoopMath.quantize(length - 10.0, 16, length))
     }
 
+    @Test fun countInLateNotesAreIncludedAtEveryGridSize() {
+        val duration = LoopMath.barTicks(4, 4)
+        for (division in LoopMath.supportedQuantization) {
+            val margin = LoopMath.preRollTicks(division)
+            assertFalse(LoopMath.isCountInPreRoll(duration - margin - 1.0, duration, division))
+            assertTrue(LoopMath.isCountInPreRoll(duration - margin.toDouble(), duration, division))
+            assertTrue(LoopMath.isCountInPreRoll(duration - 1.0, duration, division))
+            assertFalse(LoopMath.isCountInPreRoll(duration.toDouble(), duration, division))
+            assertEquals(0, LoopMath.quantize(-margin + 1.0, division, LoopMath.loopTicks(2)))
+        }
+    }
+
     @Test fun supportedQuantizationsProduceCorrectStep() {
         assertEquals(960, LoopMath.quantizeStep(4))
         assertEquals(480, LoopMath.quantizeStep(8))
