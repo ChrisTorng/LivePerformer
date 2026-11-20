@@ -140,8 +140,17 @@ private fun PerformerScreen() {
     val looper = remember(context) { LoopController(context) }
     val projectStorage = remember(context) { ProjectStorage(context) }
     val loopState by looper.state.collectAsState()
+    var lastMidiMessage by remember { mutableStateOf("MIDI：等待輸入") }
     val keyboard = remember(context, looper) {
-        PianoKeyboardView(context).apply { sendMidi = looper::onMidi }
+        PianoKeyboardView(context).apply {
+            sendMidi = { type, channel, note, velocity ->
+                looper.onMidi(type, channel, note, velocity)
+                lastMidiMessage = "觸控 · " + MidiDiagnostics.format(MidiEvent(
+                    "touch", "觸控鍵盤", 0, 0,
+                    (if (type == NativeEngine.NOTE_ON) 0x90 else 0x80) or channel,
+                    note, velocity))
+            }
+        }
     }
     val fonts = remember { mutableStateListOf<SoundFontItem>() }
     var keyboardMode by remember {
@@ -543,8 +552,10 @@ private fun PerformerScreen() {
             // Exclude high-rate Clock/Active Sensing from each device's rolling log.
             if (event.status != 0xf8 && event.status != 0xfe) uiHandler.post {
                 val previous = midiLogs[event.deviceId].orEmpty()
+                val formatted = MidiDiagnostics.format(event)
                 midiLogs[event.deviceId] =
-                    (listOf(MidiDiagnostics.format(event)) + previous).take(50)
+                    (listOf(formatted) + previous).take(50)
+                lastMidiMessage = "${event.deviceName.take(16)} · $formatted"
             }
         })
         midiInputRef.value = input
@@ -1013,10 +1024,6 @@ private fun PerformerScreen() {
                 Text("節拍器")
                 Switch(checked = loopState.metronome, onCheckedChange = looper::setMetronome)
             }
-            Text("節拍器音量：${loopState.metronomeVolume}/127")
-            Slider(value = loopState.metronomeVolume.toFloat(),
-                onValueChange = { looper.setMetronomeVolume(it.toInt()) },
-                valueRange = 0f..127f)
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1276,6 +1283,7 @@ private fun PerformerScreen() {
                 },
                 onDelete = { id -> pendingTrackRemoval = id },
                 onClear = { id -> pendingTrackClear = id },
+                midiMessage = lastMidiMessage,
                 onRename = { id ->
                     renameTrackId = id
                     renameValue = loopState.tracks.firstOrNull { it.id == id }?.name.orEmpty()
