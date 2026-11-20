@@ -859,23 +859,16 @@ class LoopController(context: Context) {
         changed()
     }
 
-    /** Pad-assigned tracks remain recordable, but keybed notes never reach them. */
-    private fun padAssignedTrackIds(sourceIsMpk: Boolean): Set<Int> {
-        val explicit = midiRoutes.filter {
-            it.trackId != 0 && it.action in setOf("note", "scale", "custom", "drum-pads") &&
-                ((it.kind == "note" && it.channel == 1 && it.first in 36..51 &&
-                    it.last in 36..51) ||
-                 (it.kind == "cc" && it.first in 20..35 && it.last in 20..35))
-        }.mapTo(mutableSetOf()) { it.trackId }
-        if (sourceIsMpk) {
-            tracks.firstOrNull(::isDrumTrack)?.let { explicit.add(it.id) }
+    /** Pad routes stay armed while keybed input is restricted to melody tracks. */
+    private fun keyboardDestinations(sourceIsMpk: Boolean): Set<Int> =
+        InputRoutingPolicy.keyboardDestinations(
+            inputTargetIds, midiRoutes, sourceIsMpk,
+            tracks.firstOrNull(::isDrumTrack)?.id,
             tracks.firstOrNull {
                 it.name.contains("Bass", ignoreCase = true) ||
                     it.name.contains("貝斯") || it.category == "貝斯"
-            }?.let { explicit.add(it.id) }
-        }
-        return explicit
-    }
+            }?.id
+        )
 
     /** Note release follows the original track even when focus has changed. */
     private fun dispatchLiveInput(
@@ -886,7 +879,7 @@ class LoopController(context: Context) {
         val key = "${source}:${note}"
         val destinations: Set<Int> = when (noteType) {
             NativeEngine.NOTE_ON -> {
-                val ids = inputTargetIds - padAssignedTrackIds(sourceIsMpk)
+                val ids = keyboardDestinations(sourceIsMpk)
                 liveInputOwners.remove(key)?.forEach { id ->
                     tracks.firstOrNull { it.id == id }?.let {
                         dispatchToTrack(it, NativeEngine.NOTE_OFF, note, 0)
@@ -896,7 +889,7 @@ class LoopController(context: Context) {
                 ids
             }
             NativeEngine.NOTE_OFF -> liveInputOwners.remove(key).orEmpty()
-            else -> inputTargetIds - padAssignedTrackIds(sourceIsMpk)
+            else -> keyboardDestinations(sourceIsMpk)
         }
         tracks.filter { it.id in destinations }.forEach {
             dispatchToTrack(it, noteType, note, velocity)
