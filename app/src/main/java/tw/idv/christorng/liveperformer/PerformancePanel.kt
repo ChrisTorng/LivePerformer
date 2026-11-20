@@ -283,8 +283,11 @@ fun PerformancePanel(
             horizontalArrangement = Arrangement.spacedBy(if (landscape) 8.dp else 2.dp)) {
             TransportButton(if (state.playing) "■" else "▶",
                 if (state.playing) "停止" else "播放") { looper.playStop() }
-            TransportButton(if (state.recording || state.armed) "■" else "●", "錄製",
-                recording = true) { looper.recordPause() }
+            TransportButton(when {
+                state.recording -> "■"
+                state.armed -> "◎"
+                else -> "●"
+            }, "錄製", recording = state.recording || state.armed) { looper.recordPause() }
             MetronomeToggle(state.metronome) { looper.setMetronome(!state.metronome) }
             Column(Modifier.width(74.dp).height(50.dp).clickable { looper.tapTempo() },
                 horizontalAlignment = Alignment.CenterHorizontally,
