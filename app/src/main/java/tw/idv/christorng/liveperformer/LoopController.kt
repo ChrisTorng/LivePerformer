@@ -1045,8 +1045,7 @@ class LoopController(context: Context) {
         // centre. MIDI CC11 is persistent Expression (0=inaudible), not a
         // momentary modulation. Without an explicit route, neutralize this
         // hardware-specific control so it cannot silence the entire track.
-        if (routes.isEmpty() && event.kind == 0xb0 && event.channel == 0 &&
-            event.data1 == 11 && event.deviceName.contains("MPK", ignoreCase = true)) {
+        if (JoystickExpressionPolicy.needsNeutralExpression(event, routes.isNotEmpty())) {
             tracks.filter { it.id in keyboardDestinations(true) }.forEach {
                 NativeEngine.midi(NativeEngine.CONTROLLER, it.channel, 11, 127)
             }
