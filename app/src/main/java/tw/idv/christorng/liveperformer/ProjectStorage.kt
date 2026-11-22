@@ -90,12 +90,9 @@ class ProjectStorage(context: Context) {
                 .thenByDescending { it.updatedAt })
     }
 
-    /** Only explicitly opened or saved files appear in the recent section. */
+    /** Older files without usage history fall back to their last-modified time. */
     fun recent(template: Boolean? = null, limit: Int = 6): List<Entry> =
-        list(template).filter { recentTime(it) > 0L }
-            .sortedWith(compareByDescending<Entry> { it.fileName == session().currentProject }
-                .thenByDescending { recentTime(it) })
-            .take(limit)
+        list(template).take(limit)
 
     /**
      * Store provenance in project JSON, not in a device-only sidecar. Existing v1
