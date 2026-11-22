@@ -181,6 +181,7 @@ private fun PerformerScreen() {
     var showProjectLibrary by remember { mutableStateOf(false) }
     var projectLibraryVersion by remember { mutableIntStateOf(0) }
     var showSaveDialog by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
     var saveName by remember { mutableStateOf(ProjectStorage.suggestedName()) }
     var saveAsTemplate by remember { mutableStateOf(false) }
     var pendingStructure by remember { mutableStateOf<Triple<Int, Int, Int>?>(null) }
@@ -742,6 +743,8 @@ private fun PerformerScreen() {
                         style = MaterialTheme.typography.bodySmall)
                     Text("另存不會覆蓋既有同名檔案；請使用「更新」覆寫目前專案。",
                         style = MaterialTheme.typography.bodySmall)
+                    saveError?.let { Text(it, color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall) }
                 }
             },
             confirmButton = { TextButton(onClick = {
@@ -755,6 +758,7 @@ private fun PerformerScreen() {
                         refreshProjectLibrary()
                         if (!saveAsTemplate) looper.markSavedIfUnchanged(content)
                         message = "已儲存 " + saved.fileName
+                        saveError = null
                         showSaveDialog = false
                         if (saveBeforeLoad && !looper.needsSaveBeforeReplace()) {
                             val resume = pendingLoadAction
@@ -763,7 +767,8 @@ private fun PerformerScreen() {
                         }
                         saveBeforeLoad = false
                     } catch (e: Exception) {
-                        message = "儲存失敗：" + e.message
+                        saveError = "儲存失敗：" + e.message
+                        message = saveError ?: "儲存失敗"
                     }
                 }
             }) { Text("儲存") } },
@@ -893,6 +898,7 @@ private fun PerformerScreen() {
                         updateCurrentProject(continueLoad = true)
                     } else {
                         saveBeforeLoad = true
+                        saveError = null
                         saveName = ProjectStorage.suggestedName()
                         saveAsTemplate = false
                         showSaveDialog = true
@@ -1101,8 +1107,9 @@ private fun PerformerScreen() {
             } else if (settingsPage == SettingsPage.PROJECT) {
             HorizontalDivider()
             Text("目前專案", style = MaterialTheme.typography.titleMedium)
-            Text(projectSession.currentProject?.removeSuffix(ProjectStorage.PROJECT_EXTENSION)
-                ?: "未命名專案（尚未指定儲存檔案）")
+            Text((projectSession.currentProject?.removeSuffix(ProjectStorage.PROJECT_EXTENSION)
+                ?: "未命名專案（尚未指定儲存檔案）") +
+                if (looper.needsSaveBeforeReplace()) " · 尚未儲存變更" else "")
             projectSession.sourceTemplate?.let {
                 Text("來源範本：" + it, style = MaterialTheme.typography.bodySmall)
             }
@@ -1112,6 +1119,7 @@ private fun PerformerScreen() {
                 Button(enabled = projectSession.currentProject != null,
                     onClick = { updateCurrentProject() }) { Text("更新") }
                 OutlinedButton(onClick = {
+                    saveError = null
                     saveName = projectSession.currentProject
                         ?.removeSuffix(ProjectStorage.PROJECT_EXTENSION)
                         ?.plus("-副本") ?: ProjectStorage.suggestedName()
@@ -1119,6 +1127,7 @@ private fun PerformerScreen() {
                     showSaveDialog = true
                 }) { Text("另存新檔") }
                 OutlinedButton(onClick = {
+                    saveError = null
                     saveName = ProjectStorage.suggestedName()
                     saveAsTemplate = true
                     showSaveDialog = true
