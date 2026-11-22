@@ -1,4 +1,4 @@
-# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.18)
+# LivePerformer — Android low-latency MIDI instrument and looper (v0.4.19)
 
 **Status: early source prototype, not yet device-verified.** Initial target: Samsung Galaxy A25 5G, USB MIDI keyboard, wired 3.5 mm headphones. v0.2.1 adds an ergonomic single-screen interface and v0.2 includes an experimental MIDI-only loop recorder; physical device performance remains unverified.
 
@@ -220,6 +220,14 @@ A GitHub Action can repackage the original archive as an ordinary ZIP: [Salamand
 - A recording that contains only Expression replaces the old CC11 automation for that track **without erasing previously recorded notes**. A take containing new notes still follows the existing replace-not-overdub note policy. A neutral Expression value at tick 0 and an automatic restoration to 127 at cycle end prevent expression attenuation from leaking into the next loop.
 - Recorded CC11 data is included in existing .lvp JSON event arrays as `[tick, 2, 11, value]`; old project files remain readable and CC7 remains a persistent mixer setting, not an event. SF2/GM drums remain mapped to note pitches only; controllers bypass drum-note mappings.
 - Regression tests cover the inverse mapping, raw non-quantized expression timing, and an Android expression-only recording that preserves an existing piano note take.
+
+## v0.4.19 — 專案更新、另存與最近使用
+
+- 專案設定置頂顯示「目前專案」及「來源範本」，顯示尚未儲存變更；已載入／另存的 .lvp 可一鍵「更新」原檔。
+- 「另存新檔」產生獨立專案，禁止覆蓋同名檔案；存軌範本不會改變目前專案識別。
+- 最近使用區列出專案、音軌範本及內建範本；舊有檔案以修改時間補入，現用專案置頂。
+- 專案 JSON 新增相容既有 v1 讀取器的可選 `sourceTemplate` 欄位，可隨專案匯入／匯出保留來源關聯。
+- 載入範本是尚未儲存的新專案；有未儲存變更時改載其他專案，已綁定檔案可先更新再讀取。
 
 ## v0.4.18 — 持續循環 Replace 錄製、TAP 響拍及主畫面 MIDI 訊息
 
