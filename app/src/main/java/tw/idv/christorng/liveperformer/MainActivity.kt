@@ -139,6 +139,7 @@ private fun PerformerScreen() {
     val audioManager = remember(context) { context.getSystemService(AudioManager::class.java) }
     val looper = remember(context) { LoopController(context) }
     val projectStorage = remember(context) { ProjectStorage(context) }
+    var projectSession by remember(projectStorage) { mutableStateOf(projectStorage.session()) }
     val loopState by looper.state.collectAsState()
     var lastMidiMessage by remember { mutableStateOf("MIDI：等待輸入") }
     val keyboard = remember(context, looper) {
@@ -180,6 +181,7 @@ private fun PerformerScreen() {
     var showProjectLibrary by remember { mutableStateOf(false) }
     var projectLibraryVersion by remember { mutableIntStateOf(0) }
     var showSaveDialog by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
     var saveName by remember { mutableStateOf(ProjectStorage.suggestedName()) }
     var saveAsTemplate by remember { mutableStateOf(false) }
     var pendingStructure by remember { mutableStateOf<Triple<Int, Int, Int>?>(null) }
@@ -310,6 +312,57 @@ private fun PerformerScreen() {
         if (looper.needsSaveBeforeReplace()) pendingLoadAction = action else action()
     }
 
+    fun refreshProjectLibrary() {
+        projectSession = projectStorage.session()
+        projectLibraryVersion++
+    }
+
+    fun loadProjectEntry(entry: ProjectStorage.Entry) {
+        guardedLoad {
+            scope.launch {
+                try {
+                    val json = withContext(Dispatchers.IO) { projectStorage.read(entry) }
+                    looper.importDocument(json)
+                    if (entry.isTemplate) looper.markSessionUnsaved()
+                    projectStorage.activate(entry)
+                    refreshProjectLibrary()
+                    settingsPage = null
+                    message = "已讀取 " + entry.fileName
+                } catch (e: Exception) { message = "讀取失敗：" + e.message }
+            }
+        }
+    }
+
+    fun loadBuiltinTemplate(template: String) {
+        guardedLoad {
+            if (template == ProjectStorage.DEMO_TEMPLATE) looper.loadDemo()
+            else looper.newProject(true)
+            projectStorage.beginNew(template)
+            refreshProjectLibrary()
+            settingsPage = null
+        }
+    }
+
+    fun updateCurrentProject(continueLoad: Boolean = false) {
+        scope.launch {
+            try {
+                val content = looper.exportDocument(false)
+                val saved = withContext(Dispatchers.IO) {
+                    projectStorage.updateCurrent(content)
+                }
+                looper.markSavedIfUnchanged(content)
+                refreshProjectLibrary()
+                message = "已更新 " + saved.fileName
+                if (continueLoad && !looper.needsSaveBeforeReplace()) {
+                    val resume = pendingLoadAction
+                    pendingLoadAction = null
+                    saveBeforeLoad = false
+                    resume?.invoke()
+                }
+            } catch (e: Exception) { message = "更新失敗：" + e.message }
+        }
+    }
+
     val createJson = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
@@ -317,13 +370,15 @@ private fun PerformerScreen() {
             saveBeforeLoad = false
         } else scope.launch {
             try {
-                val content = looper.exportDocument(exportSettingsOnly)
+                val original = looper.exportDocument(exportSettingsOnly)
+                val content = if (exportSettingsOnly) original
+                    else projectStorage.withProjectMetadata(original)
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use {
                         it.write(content)
                     } ?: error("無法寫入檔案")
                 }
-                if (!exportSettingsOnly) looper.markSavedIfUnchanged(content)
+                // Exporting a copy does not update the current .lvp file.
                 message = "已儲存"
                 if (saveBeforeLoad && !looper.needsSaveBeforeReplace()) {
                     val resume = pendingLoadAction
@@ -353,7 +408,9 @@ private fun PerformerScreen() {
                 val libraryEntry = withContext(Dispatchers.IO) {
                     projectStorage.importExternal(importedName, content)
                 }
-                projectLibraryVersion++
+                if (libraryEntry.isTemplate) looper.markSessionUnsaved()
+                projectStorage.activate(libraryEntry)
+                refreshProjectLibrary()
                 val missing = looper.state.value.tracks.map { it.fontId }
                     .filter { id -> fonts.none { it.id == id } }.distinct()
                 message = if (missing.isEmpty())
@@ -677,33 +734,42 @@ private fun PerformerScreen() {
     if (showSaveDialog) {
         AlertDialog(
             onDismissRequest = { showSaveDialog = false; saveBeforeLoad = false },
-            title = { Text(if (saveAsTemplate) "儲存音軌範本" else "儲存專案") },
+            title = { Text(if (saveAsTemplate) "儲存音軌範本" else "另存新專案") },
             text = {
                 Column {
                     OutlinedTextField(value = saveName, onValueChange = { saveName = it },
                         singleLine = true, label = { Text("名稱") })
                     Text("副檔名：" + if (saveAsTemplate) ".lvpt" else ".lvp",
                         style = MaterialTheme.typography.bodySmall)
+                    Text("另存不會覆蓋既有同名檔案；請使用「更新」覆寫目前專案。",
+                        style = MaterialTheme.typography.bodySmall)
+                    saveError?.let { Text(it, color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall) }
                 }
             },
             confirmButton = { TextButton(onClick = {
-                showSaveDialog = false
                 scope.launch {
                     try {
                         val content = looper.exportDocument(saveAsTemplate)
                         val saved = withContext(Dispatchers.IO) {
-                            projectStorage.save(saveName, saveAsTemplate, content)
+                            if (saveAsTemplate) projectStorage.saveAsTemplate(saveName, content)
+                            else projectStorage.saveAsProject(saveName, content)
                         }
-                        projectLibraryVersion++
+                        refreshProjectLibrary()
                         if (!saveAsTemplate) looper.markSavedIfUnchanged(content)
-                        message = "已儲存 ${saved.fileName}"
+                        message = "已儲存 " + saved.fileName
+                        saveError = null
+                        showSaveDialog = false
                         if (saveBeforeLoad && !looper.needsSaveBeforeReplace()) {
                             val resume = pendingLoadAction
                             pendingLoadAction = null
                             resume?.invoke()
                         }
-                    } catch (e: Exception) { message = "儲存失敗：${e.message}" }
-                    finally { saveBeforeLoad = false }
+                        saveBeforeLoad = false
+                    } catch (e: Exception) {
+                        saveError = "儲存失敗：" + e.message
+                        message = saveError ?: "儲存失敗"
+                    }
                 }
             }) { Text("儲存") } },
             dismissButton = { TextButton(onClick = {
@@ -716,29 +782,21 @@ private fun PerformerScreen() {
         val entries = remember(projectLibraryVersion) { projectStorage.list() }
         AlertDialog(
             onDismissRequest = { showProjectLibrary = false },
-            title = { Text("讀取專案／範本") },
+            title = { Text("所有專案／範本") },
             text = {
                 if (entries.isEmpty()) Text("尚未儲存專案。")
                 else LazyColumn(Modifier.heightIn(max = 300.dp)) {
                     items(entries, key = { it.fileName }) { entry ->
                         TextButton(onClick = {
                             showProjectLibrary = false
-                            guardedLoad {
-                                scope.launch {
-                                    try {
-                                        val json = withContext(Dispatchers.IO) {
-                                            projectStorage.read(entry)
-                                        }
-                                        looper.importDocument(json)
-                                        settingsPage = null
-                                        message = "已讀取 ${entry.fileName}"
-                                    } catch (e: Exception) {
-                                        message = "讀取失敗：${e.message}"
-                                    }
-                                }
-                            }
+                            loadProjectEntry(entry)
                         }, modifier = Modifier.fillMaxWidth()) {
-                            Text(entry.fileName, modifier = Modifier.fillMaxWidth())
+                            val type = if (entry.isTemplate) "範本" else "專案"
+                            val current = if (entry.fileName == projectSession.currentProject)
+                                "目前 · " else ""
+                            Text(current + entry.displayName + "（" + type + "）",
+                                modifier = Modifier.fillMaxWidth(),
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
@@ -836,11 +894,15 @@ private fun PerformerScreen() {
             text = { Text("目前的專案含有尚未儲存至檔案的內容。讀取其他專案或預設範本會覆蓋現有音軌。") },
             confirmButton = {
                 TextButton(onClick = {
-                    saveBeforeLoad = true
-                    exportSettingsOnly = false
-                    saveName = ProjectStorage.suggestedName()
-                    saveAsTemplate = false
-                    showSaveDialog = true
+                    if (projectSession.currentProject != null) {
+                        updateCurrentProject(continueLoad = true)
+                    } else {
+                        saveBeforeLoad = true
+                        saveError = null
+                        saveName = ProjectStorage.suggestedName()
+                        saveAsTemplate = false
+                        showSaveDialog = true
+                    }
                 }) { Text("先儲存再讀取") }
             },
             dismissButton = {
@@ -1044,7 +1106,35 @@ private fun PerformerScreen() {
                 style = MaterialTheme.typography.bodySmall)
             } else if (settingsPage == SettingsPage.PROJECT) {
             HorizontalDivider()
-            Text("專案", style = MaterialTheme.typography.titleMedium)
+            Text("目前專案", style = MaterialTheme.typography.titleMedium)
+            Text((projectSession.currentProject?.removeSuffix(ProjectStorage.PROJECT_EXTENSION)
+                ?: "未命名專案（尚未指定儲存檔案）") +
+                if (looper.needsSaveBeforeReplace()) " · 尚未儲存變更" else "")
+            projectSession.sourceTemplate?.let {
+                Text("來源範本：" + it, style = MaterialTheme.typography.bodySmall)
+            }
+            FlowRow(Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(enabled = projectSession.currentProject != null,
+                    onClick = { updateCurrentProject() }) { Text("更新") }
+                OutlinedButton(onClick = {
+                    saveError = null
+                    saveName = projectSession.currentProject
+                        ?.removeSuffix(ProjectStorage.PROJECT_EXTENSION)
+                        ?.plus("-副本") ?: ProjectStorage.suggestedName()
+                    saveAsTemplate = false
+                    showSaveDialog = true
+                }) { Text("另存新檔") }
+                OutlinedButton(onClick = {
+                    saveError = null
+                    saveName = ProjectStorage.suggestedName()
+                    saveAsTemplate = true
+                    showSaveDialog = true
+                }) { Text("儲存範本") }
+            }
+            HorizontalDivider()
+            Text("開啟或建立", style = MaterialTheme.typography.titleMedium)
             FlowRow(Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1054,54 +1144,84 @@ private fun PerformerScreen() {
                         onDismissRequest = { showNewChoices = false }) {
                         DropdownMenuItem(text = { Text("全空白（無樂器軌）") }, onClick = {
                             showNewChoices = false
-                            guardedLoad { looper.newProject(false); settingsPage = null }
+                            guardedLoad {
+                                looper.newProject(false)
+                                projectStorage.beginNew()
+                                refreshProjectLibrary()
+                                settingsPage = null
+                            }
                         })
-                        DropdownMenuItem(text = { Text("預設空軌（五種樂器）") }, onClick = {
+                        DropdownMenuItem(text = { Text(ProjectStorage.TRACK_TEMPLATE) }, onClick = {
                             showNewChoices = false
-                            guardedLoad { looper.newProject(true); settingsPage = null }
+                            loadBuiltinTemplate(ProjectStorage.TRACK_TEMPLATE)
                         })
                     }
                 }
-                OutlinedButton(onClick = {
-                    saveName = ProjectStorage.suggestedName()
-                    saveAsTemplate = false
-                    showSaveDialog = true
-                }) { Text("儲存") }
                 Box {
                     OutlinedButton(onClick = { showLoadChoices = true }) { Text("讀取") }
                     DropdownMenu(expanded = showLoadChoices,
                         onDismissRequest = { showLoadChoices = false }) {
-                        DropdownMenuItem(text = { Text("已儲存的專案／範本") }, onClick = {
+                        DropdownMenuItem(text = { Text("所有專案／範本") }, onClick = {
                             showLoadChoices = false
                             projectLibraryVersion++
                             showProjectLibrary = true
                         })
                         DropdownMenuItem(text = { Text("從外部檔案匯入") }, onClick = {
                             showLoadChoices = false
-                            guardedLoad {
-                                openJson.launch(arrayOf("*/*"))
-                            }
+                            guardedLoad { openJson.launch(arrayOf("*/*")) }
                         })
-                        DropdownMenuItem(text = { Text("內建示範（含錄製內容）") }, onClick = {
+                        DropdownMenuItem(text = { Text(ProjectStorage.DEMO_TEMPLATE) }, onClick = {
                             showLoadChoices = false
-                            guardedLoad { looper.loadDemo(); settingsPage = null }
+                            loadBuiltinTemplate(ProjectStorage.DEMO_TEMPLATE)
                         })
                     }
                 }
                 OutlinedButton(onClick = {
-                    saveName = ProjectStorage.suggestedName()
-                    saveAsTemplate = true
-                    showSaveDialog = true
-                }) { Text("存軌範本") }
+                    exportSettingsOnly = false
+                    createJson.launch(ProjectStorage.suggestedName() +
+                        ProjectStorage.PROJECT_EXTENSION)
+                }) { Text("匯出 .lvp") }
             }
-            OutlinedButton(onClick = {
-                exportSettingsOnly = false
-                createJson.launch(ProjectStorage.suggestedName() + ProjectStorage.PROJECT_EXTENSION)
-            }) { Text("匯出 .lvp 至外部位置") }
-            Text("專案與範本預設儲存於 LivePerformer 專用資料庫，" +
-                "亦可透過 Android Files → LivePerformer → 專案／音軌範本 存取；" +
-                "從 Downloads 匯入的檔案會複製到專用資料庫。",
+            val recentProjects = remember(projectLibraryVersion) {
+                projectStorage.recent(false, 5)
+            }
+            val recentTemplates = remember(projectLibraryVersion) {
+                projectStorage.recent(true, 5)
+            }
+            val recentBuiltins = remember(projectLibraryVersion) {
+                projectStorage.recentBuiltins()
+            }
+            Text("最近使用的專案", style = MaterialTheme.typography.titleMedium)
+            if (recentProjects.isEmpty()) Text("尚無使用紀錄。",
                 style = MaterialTheme.typography.bodySmall)
+            recentProjects.forEach { entry ->
+                OutlinedButton(onClick = { loadProjectEntry(entry) },
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text((if (entry.fileName == projectSession.currentProject) "目前 · " else "") +
+                        entry.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Text("最近使用的範本", style = MaterialTheme.typography.titleMedium)
+            if (recentTemplates.isEmpty() && recentBuiltins.isEmpty())
+                Text("尚無使用紀錄。", style = MaterialTheme.typography.bodySmall)
+            recentTemplates.forEach { entry ->
+                OutlinedButton(onClick = { loadProjectEntry(entry) },
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text(entry.displayName + "（音軌範本）",
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            recentBuiltins.forEach { template ->
+                OutlinedButton(onClick = { loadBuiltinTemplate(template) },
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text(template + "（內建）",
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Text("專案與範本均保存在 LivePerformer 專用資料庫；" +
+                "可由 Android Files → LivePerformer 存取。更新只覆寫目前的 .lvp 檔案。",
+                style = MaterialTheme.typography.bodySmall)
+            Text(message, style = MaterialTheme.typography.bodySmall)
             } else if (settingsPage == SettingsPage.MIDI) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedButton(onClick = { importMidiRoutes.launch(arrayOf("application/json", "*/*")) }) {

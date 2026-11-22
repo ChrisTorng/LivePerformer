@@ -495,6 +495,9 @@ class LoopController(context: Context) {
 
     @Synchronized fun needsSaveBeforeReplace(): Boolean = hasUnsavedChanges
 
+    /** Loading a track template starts a new editable, not-yet-saved project. */
+    @Synchronized fun markSessionUnsaved() { hasUnsavedChanges = true }
+
     @Synchronized fun markSavedIfUnchanged(exportedContent: String) {
         if (exportDocument(false) == exportedContent) hasUnsavedChanges = false
     }
