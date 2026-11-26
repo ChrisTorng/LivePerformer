@@ -107,6 +107,14 @@ class Engine final : public oboe::AudioStreamDataCallback, public oboe::AudioStr
     std::atomic<float> outputPeak_{0.f};
     // Packed (fontIndex:8, bank:14, program:7). Sent in program-change events.
     std::array<std::atomic<uint32_t>, 16> channelPresets_{};
+    // Immutable clips are replaced by the control thread, never freed in the callback.
+    struct Pcm { std::vector<int16_t> samples; };
+    std::array<std::atomic<Pcm*>, 8> audioClips_{};
+    std::array<std::atomic<float>, 8> audioVolumes_{};
+    std::atomic<bool> audioReading_{false};
+    std::mutex audioWriteMutex_;
+    std::vector<Pcm*> audioRetired_;
+    std::atomic<int64_t> audioEpoch_{0}, audioPeriod_{0};
     float lastAppliedGain_{-1.0f}; // Audio callback only.
     std::atomic<bool> overrun_{false};
     std::atomic<int64_t> lastDispatchUs_{-1};
@@ -162,6 +170,43 @@ public:
         delete active_;
         active_ = nullptr;
         lastAppliedGain_ = -1.0f;
+    }
+    void setAudioClip(int slot, std::vector<int16_t> samples) {
+        if (slot < 0 || slot >= 8) return;
+        std::lock_guard<std::mutex> lock(audioWriteMutex_);
+        Pcm* next = samples.empty() ? nullptr : new Pcm{std::move(samples)};
+        if (auto* old = audioClips_[slot].exchange(next)) audioRetired_.push_back(old);
+        if (!audioReading_.load()) {
+            for (auto* old : audioRetired_) delete old;
+            audioRetired_.clear();
+        }
+    }
+    void setAudioVolume(int slot, float v) {
+        if (slot >= 0 && slot < 8) audioVolumes_[slot].store(std::clamp(v, 0.f, 1.f));
+    }
+    void setAudioClock(int64_t epoch, int64_t period) {
+        audioEpoch_.store(epoch);
+        audioPeriod_.store(period);
+    }
+    void mixAudio(float* output, int frames, int rate) noexcept {
+        const auto period = audioPeriod_.load();
+        if (period <= 0 || rate <= 0) return;
+        auto phase = (nowNs() - audioEpoch_.load()) % period;
+        if (phase < 0) return;
+        audioReading_.store(true);
+        for (int slot = 0; slot < 8; ++slot) {
+            const auto* pcm = audioClips_[slot].load();
+            const float volume = audioVolumes_[slot].load() * gain_.load() / 0.8f;
+            if (!pcm || volume <= 0) continue;
+            for (int i = 0; i < frames; ++i) {
+                const auto at = (phase + int64_t(i) * 1000000000LL / rate) % period;
+                const auto pos = size_t(at * 48000LL / 1000000000LL);
+                if (pos >= pcm->samples.size()) continue;
+                const float sample = pcm->samples[pos] * (volume / 32768.f);
+                output[2*i] += sample; output[2*i+1] += sample;
+            }
+        }
+        audioReading_.store(false);
     }
     float outputPeak() noexcept { return outputPeak_.exchange(0.f, std::memory_order_relaxed); }
     void setGain(float gain) noexcept {
@@ -349,8 +394,12 @@ public:
             output[2*i+1] = std::clamp(output[2*i+1] + sample, -1.0f, 1.0f);
             --clickRemaining_;
         }
+        mixAudio(output, frames, sampleRate);
         float peak = 0.f;
-        for (int i = 0; i < frames * 2; ++i) peak = std::max(peak, std::abs(output[i]));
+        for (int i = 0; i < frames * 2; ++i) {
+            output[i] = std::clamp(output[i], -1.f, 1.f);
+            peak = std::max(peak, std::abs(output[i]));
+        }
         // Hold the largest callback peak until the UI polls (~75ms), so drum
         // transients are not missed by sampling just one callback.
         float prior = outputPeak_.load(std::memory_order_relaxed);
@@ -364,6 +413,19 @@ Engine& engine() { static Engine instance; return instance; }
 } // namespace
 
 extern "C" {
+JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_setAudioClip(JNIEnv* env, jobject, jint slot, jshortArray pcm) {
+    const auto count = env->GetArrayLength(pcm);
+    if (count < 0 || count > 48000 * 48) return;
+    std::vector<int16_t> samples(count);
+    if (count) env->GetShortArrayRegion(pcm, 0, count, reinterpret_cast<jshort*>(samples.data()));
+    if (!env->ExceptionCheck()) engine().setAudioClip(slot, std::move(samples));
+}
+JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_setAudioVolume(JNIEnv*, jobject, jint slot, jfloat v) {
+    engine().setAudioVolume(slot, v);
+}
+JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_setAudioClock(JNIEnv*, jobject, jlong epoch, jlong period) {
+    engine().setAudioClock(epoch, period);
+}
 JNIEXPORT jboolean JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_start(JNIEnv*, jobject) { return engine().start(); }
 JNIEXPORT jboolean JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_restart(JNIEnv*, jobject, jint deviceId) {
     engine().stop();

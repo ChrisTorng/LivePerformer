@@ -181,7 +181,7 @@ fun MidiRoutingSettings(
             if (targetTrack == 0) "整體控制" else "請選擇音軌",
             listOf("0" to "整體控制") +
                 state.tracks.map { it.id.toString() to
-                    (it.name + "（Ch " + (it.channel + 1) + "）") },
+                    (it.name + if (it.isAudio) "（Audio）" else "（Ch " + (it.channel + 1) + "）") },
             { targetTrack = it.toInt() }, Modifier.fillMaxWidth())
 
         Text("映射方式", style = MaterialTheme.typography.labelLarge)

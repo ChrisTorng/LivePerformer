@@ -26,7 +26,10 @@ data class LoopTrackView(
     val noteRects: List<LoopNoteView>,
     val activityLevel: Float,
     val keyboardBase: Int,
-    val pitchRange: IntRange?
+    val pitchRange: IntRange?,
+    val isAudio: Boolean = false,
+    val waveform: List<Float> = emptyList(),
+    val audioFraction: Float = 1f
 )
 data class LoopView(
     val bpm: Int,
@@ -51,7 +54,8 @@ data class LoopView(
     val countInEnabled: Boolean,
     val countInBars: Int,
     val countInBeatsLeft: Int,
-    val tapCount: Int
+    val tapCount: Int,
+    val audioError: String? = null
 )
 
 /**
@@ -72,6 +76,10 @@ class LoopController(context: Context) {
         var keyboardBase: Int = -1,
         val events: MutableList<Event> = mutableListOf()
     ) {
+        val isAudio get() = channel < 0
+        var pcm = ShortArray(0)
+        var waveform = emptyList<Float>()
+        fun replacePcm(value: ShortArray) { pcm = value; waveform = LoopPcm.peaks(value) }
         val heldVelocities = mutableMapOf<Int, Int>()
         var activityLevel = 0f // MIDI activity proxy, not measured PCM amplitude.
     }
@@ -91,6 +99,57 @@ class LoopController(context: Context) {
             mpkPrefs.getInt("knobFirst:*", 2))
         return legacy.takeUnless { it == 1 }?.takeIf { it in 0..120 } ?: 2
     }
+    private val appContext = context.applicationContext
+    private val sessionFile = android.util.AtomicFile(java.io.File(appContext.filesDir, "loop-session.json"))
+    private var audioCapture: AudioLoopCapture? = null
+    private var audioTargets: Set<Int> = emptySet()
+    private val uploadedAudio = arrayOfNulls<ShortArray>(8)
+    @Volatile var audioError: String? = null
+        private set
+    private fun loopNs(): Long = (LoopMath.loopTicks(bars, beatsPerBar, beatUnit) *
+        60_000_000_000.0 / (bpm * LoopMath.PPQ)).toLong()
+    private fun loopSamples(): Int = (loopNs() / 1e9 * LoopPcm.RATE).toInt()
+    private fun cancelAudio() {
+        audioCapture?.cancel()
+        audioCapture = null
+        audioTargets = emptySet()
+    }
+    private fun finishAudio() {
+        val input = audioCapture
+        if (input == null) { audioTargets = emptySet(); return }
+        val result = input.finish()
+        audioError = input.error ?: if (result == null) "未取得錄音，保留原音訊" else null
+        if (result != null) {
+            tracks.filter { it.id in audioTargets }.forEach { it.replacePcm(result) }
+            dirty = true
+            hasUnsavedChanges = true
+        }
+        audioCapture = null
+        audioTargets = emptySet()
+    }
+    private fun syncAudio() {
+        val solo = tracks.any { it.solo }
+        for (slot in 0 until 8) {
+            val track = tracks.firstOrNull { it.channel == -slot - 1 }
+            val pcm = track?.pcm
+            if (uploadedAudio[slot] !== pcm) {
+                NativeEngine.setAudioClip(slot, pcm ?: ShortArray(0))
+                uploadedAudio[slot] = pcm
+            }
+            NativeEngine.setAudioVolume(slot, if (track == null || track.muted ||
+                (solo && !track.solo) || track.id in audioTargets) 0f else track.volume / 127f)
+        }
+        if (playing && !countInActive) {
+            val position = absoluteTick % LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
+            val elapsed = (position * 60_000_000_000.0 / (bpm * LoopMath.PPQ)).toLong()
+            NativeEngine.setAudioClock(clockNs - elapsed, loopNs())
+        } else NativeEngine.setAudioClock(0, 0)
+    }
+    @Synchronized fun audioPermissionNeeded(): Boolean =
+        recordingTrack == null && armedTrack == null &&
+            tracks.any { it.isAudio && it.id in inputTargetIds } &&
+            appContext.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
     private val tracks = mutableListOf<Track>()
     private val midiRoutes = mutableListOf<MidiRoute>()
     private val inputTargetIds = linkedSetOf<Int>()
@@ -173,7 +232,7 @@ class LoopController(context: Context) {
         countInEnabled = true
         countInBars = 1
         countInActive = false
-        nextId = 6
+        nextId = 7
         selectedId = 5
         val drums = Track(1, 9, "鼓組", 128, 0)
         val bass = Track(2, 1, "Bass", 0, 33)
@@ -204,7 +263,7 @@ class LoopController(context: Context) {
             hit(lead, beat * q, note, 82, if (beat == 3 || beat == 7) q * 3 / 4 else q / 2)
         }
         tracks.clear()
-        tracks.addAll(listOf(drums,bass,strings,lead,piano))
+        tracks.addAll(listOf(drums,bass,strings,lead,piano, Track(6, -1, "音訊 1", 0, 0, category = "音訊")))
         listOf("鼓組","貝斯","弦樂","Lead","鋼琴").forEachIndexed { i, name ->
             tracks[i].category = name
         }
@@ -222,6 +281,7 @@ class LoopController(context: Context) {
 
     /** Start a new blank project or a project with five empty instrument tracks. */
     @Synchronized fun newProject(withTemplateTracks: Boolean) {
+        cancelAudio()
         playing = false
         armedTrack = null
         recordingTrack = null
@@ -261,16 +321,18 @@ class LoopController(context: Context) {
             tracks += Track(3, 2, "弦樂", 0, 48, category = "弦樂")
             tracks += Track(4, 3, "Lead", 0, 80, category = "合成器主奏")
             tracks += Track(5, 0, "鋼琴", 0, 0, category = "鋼琴")
+            tracks += Track(6, -1, "音訊 1", 0, 0, category = "音訊")
         }
         selectedId = if (withTemplateTracks) 5 else 0
         inputTargetIds.clear()
         if (selectedId != 0) inputTargetIds += selectedId
-        nextId = if (withTemplateTracks) 6 else 1
+        nextId = if (withTemplateTracks) 7 else 1
         refreshPrograms()
         changed()
     }
 
     @Synchronized fun loadDemo() {
+        cancelAudio()
         playing = false
         armedTrack = null
         recordingTrack = null
@@ -298,7 +360,9 @@ class LoopController(context: Context) {
     }
 
     @Synchronized private fun restore(): Boolean = runCatching {
-        decode(prefs.getString("data", null) ?: return@runCatching false, false)
+        val stored = if (sessionFile.baseFile.exists()) sessionFile.readFully().toString(Charsets.UTF_8)
+            else prefs.getString("data", null) ?: return@runCatching false
+        decode(stored, false)
     }.getOrDefault(false)
 
     private fun decode(data: String, importing: Boolean): Boolean {
@@ -317,11 +381,11 @@ class LoopController(context: Context) {
         val occupied = mutableSetOf<Int>()
         val importedRoutes = decodeMidiRoutes(root.optJSONArray("midiRoutes") ?: JSONArray())
         val saved = root.getJSONArray("tracks")
-        require(saved.length() in 0..16) { "樂器軌數量不正確" }
+        require(saved.length() in 0..24) { "樂器軌數量不正確" }
         for (i in 0 until saved.length()) {
             val obj = saved.getJSONObject(i)
             val channel = obj.getInt("channel")
-            require(channel in 0..15 && occupied.add(channel)) { "MIDI 聲道重複或無效" }
+            require(channel in -8..15 && occupied.add(channel)) { "MIDI 聲道重複或無效" }
             val id = obj.getInt("id")
             val track = Track(id, channel, obj.optString("name", "樂器"),
                 obj.optInt("bank"), obj.optInt("program").coerceIn(0, 127),
@@ -330,7 +394,10 @@ class LoopController(context: Context) {
                     if (channel == 9) "鼓組" else GmCategories.names[GmCategories.family(obj.optInt("program"))]
                 }, obj.optBoolean("solo", false), obj.optInt("volume", 100).coerceIn(0, 127),
                 obj.optInt("keyboardBase", -1).coerceIn(-1, 127))
-            if (!settingsOnly) {
+            if (track.isAudio) {
+                track.category = "音訊"
+                if (!settingsOnly) track.replacePcm(LoopPcm.decode(obj.optString("pcm", "")))
+            } else if (!settingsOnly) {
                 val notes = obj.optJSONArray("events") ?: JSONArray()
                 require(notes.length() <= 100000) { "MIDI 音符數量過多" }
                 for (n in 0 until notes.length()) {
@@ -354,6 +421,7 @@ class LoopController(context: Context) {
             newTracks += track
         }
         if (importing) {
+            cancelAudio()
             clockSender?.invoke(0xfc)
             lastClockIndex = -1L
             playing = false
@@ -533,7 +601,9 @@ class LoopController(context: Context) {
                 .put("muted", t.muted).put("solo", t.solo)
                 .put("volume", t.volume).put("keyboardBase", t.keyboardBase)
                 .put("fontId", t.fontId).put("category", t.category)
-            if (!settingsOnly) {
+            if (t.isAudio) {
+                if (!settingsOnly && t.pcm.isNotEmpty()) obj.put("pcm", LoopPcm.encode(t.pcm))
+            } else if (!settingsOnly) {
                 val events = JSONArray()
                 t.events.forEach { e ->
                     events.put(JSONArray().put(e.tick).put(e.type).put(e.note).put(e.velocity))
@@ -547,7 +617,14 @@ class LoopController(context: Context) {
 
     @Synchronized private fun save() {
         if (!dirty) return
-        prefs.edit().putString("data", serialize(false, false).toString()).apply()
+        val stream = runCatching { sessionFile.startWrite() }.getOrElse { return }
+        try {
+            stream.write(serialize(false, false).toString().toByteArray(Charsets.UTF_8))
+            sessionFile.finishWrite(stream)
+        } catch (e: Exception) {
+            sessionFile.failWrite(stream)
+            return
+        }
         dirty = false
         lastSaveNs = System.nanoTime()
     }
@@ -589,7 +666,7 @@ class LoopController(context: Context) {
         // Display the physical keybed's MIDI input even if an instrument is
         // muted, pad-only, or not a recording destination.
         val inputVelocities = physicalKeybed.velocities().toMutableMap()
-        tracks.filter { it.id in inputTargetIds }.forEach { track ->
+        tracks.filter { it.id in inputTargetIds && !it.isAudio }.forEach { track ->
             keyVelocities[track.channel]?.forEach { (pitch, velocity) ->
                 inputVelocities[pitch] = maxOf(inputVelocities[pitch] ?: 0, velocity)
             }
@@ -605,10 +682,12 @@ class LoopController(context: Context) {
                     it.volume, it.events.count { event -> event.type == NativeEngine.NOTE_ON },
                     it.fontId, it.category.ifBlank {
                         if (it.channel == 9) "鼓組" else GmCategories.names[GmCategories.family(it.program)]
-                    }, pianoNotes(it, length), it.activityLevel, it.keyboardBase,
-                    if (recorded.isEmpty()) null else recorded.minOf { e -> e.note }..recorded.maxOf { e -> e.note })
+                    }, pianoNotes(it, length), if (it.id in audioTargets) audioCapture?.peak ?: 0f else if (it.isAudio) it.waveform.getOrNull((at.toFloat() / length / (it.pcm.size.toFloat() / loopSamples().coerceAtLeast(1)).coerceAtLeast(0.0001f) * 128).toInt()) ?: 0f else it.activityLevel, it.keyboardBase,
+                    if (recorded.isEmpty()) null else recorded.minOf { e -> e.note }..recorded.maxOf { e -> e.note },
+                    it.isAudio, if (it.id in audioTargets) audioCapture?.preview() ?: it.waveform else it.waveform,
+                    if (it.id in audioTargets) 1f else (it.pcm.size.toFloat() / loopSamples().coerceAtLeast(1)))
             }, midiRoutes.toList(), countInEnabled, countInBars, countLeft,
-            tapTracker.tapCount)
+            tapTracker.tapCount, audioError)
     }
 
     private fun publish() {
@@ -618,6 +697,7 @@ class LoopController(context: Context) {
     private fun changed() {
         hasUnsavedChanges = true
         dirty = true
+        syncAudio()
         publish()
         // Save is coalesced by the scheduler to avoid a disk write per slider tick.
     }
@@ -699,7 +779,7 @@ class LoopController(context: Context) {
     }
 
     private fun stopRecord(at: Double) {
-        if (recordingTrack != null) finishRecordingPass(at)
+        if (recordingTrack != null) { finishAudio(); finishRecordingPass(at) } else cancelAudio()
         heldRecordingNotes.clear()
         heldRecordingNotesByTrack.clear()
         takeHasNotesByTrack.clear()
@@ -795,6 +875,11 @@ class LoopController(context: Context) {
             recordingTargets = armedTargets
             armedTargets = emptySet()
             recordStart = armedAt
+            audioTargets = if (audioCapture != null) tracks.filter { it.isAudio && it.id in recordingTargets }.map { it.id }.toSet() else emptySet()
+            if (audioTargets.isNotEmpty()) {
+                val elapsed = ((absoluteTick - recordStart) * 60_000_000_000.0 / (bpm * LoopMath.PPQ)).toLong()
+                audioCapture?.begin(clockNs - elapsed, loopSamples())
+            }
             armedTrack = null
             heldRecordingNotesByTrack.clear()
             takeHasNotesByTrack.clear()
@@ -812,8 +897,14 @@ class LoopController(context: Context) {
         if (recordingTrack != null) {
             val length = LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
             while (absoluteTick >= recordStart + length) {
+                finishAudio()
                 finishRecordingPass(recordStart + length - 1)
                 recordStart += length
+                recordingTargets = recordingTargets.filterTo(linkedSetOf()) { id ->
+                    tracks.any { it.id == id && !it.isAudio }
+                }
+                recordingTrack = recordingTargets.firstOrNull()
+                if (recordingTrack == null) break
             }
         }
     }
@@ -822,6 +913,8 @@ class LoopController(context: Context) {
         val now = System.nanoTime()
         advance(now)
         updateRecording()
+        audioCapture?.error?.let { audioError = it; cancelAudio() }
+        syncAudio()
         if (countInActive) {
             // Count-in clicks continue even when the ordinary metronome is switched off.
             emitClicks(lastCountInScheduled, countInProgress, true)
@@ -888,7 +981,7 @@ class LoopController(context: Context) {
             countInActive = false
             NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
             // A stopped take must never leave CC11 attenuation on a channel.
-            tracks.forEach {
+            tracks.filterNot { it.isAudio }.forEach {
                 NativeEngine.midi(NativeEngine.CONTROLLER, it.channel, 11, 127)
             }
             liveInputOwners.clear()
@@ -911,6 +1004,7 @@ class LoopController(context: Context) {
         // Starting without count-in should record on the very same PLAY press,
         // not depend on the next 4-ms scheduler dispatch to arm the take.
         if (playing && !countInActive) updateRecording()
+        syncAudio()
         publish()
         save()
     }
@@ -926,6 +1020,12 @@ class LoopController(context: Context) {
             stopRecord(absoluteTick)
             changed()
             return
+        }
+        if (audioPermissionNeeded()) { audioError = "請授予麥克風錄音權限"; publish(); return }
+        audioError = null
+        if (tracks.any { it.isAudio && it.id in inputTargetIds }) {
+            cancelAudio()
+            audioCapture = AudioLoopCapture().also { it.open() }
         }
         preRollEvents.clear()
         takeHasNotes = false
@@ -946,6 +1046,7 @@ class LoopController(context: Context) {
         val t = tracks.firstOrNull { it.id == id } ?: return
         if (t.id in recordingTargets || t.id in armedTargets) stopRecord(absoluteTick)
         t.events.clear()
+        if (t.isAudio) t.replacePcm(ShortArray(0))
         releaseLiveTrack(t.id)
         changed()
     }
@@ -953,7 +1054,7 @@ class LoopController(context: Context) {
     /** Pad routes stay armed while keybed input is restricted to melody tracks. */
     private fun keyboardDestinations(sourceIsMpk: Boolean): Set<Int> =
         InputRoutingPolicy.keyboardDestinations(
-            inputTargetIds, midiRoutes, sourceIsMpk,
+            inputTargetIds.filterTo(linkedSetOf()) { id -> tracks.any { it.id == id && !it.isAudio } }, midiRoutes, sourceIsMpk,
             tracks.firstOrNull(::isDrumTrack)?.id,
             tracks.firstOrNull {
                 it.name.contains("Bass", ignoreCase = true) ||
@@ -995,6 +1096,7 @@ class LoopController(context: Context) {
     /** Stop only this channel, not the other tracks or the entire synthesizer. */
     private fun releaseLiveTrack(id: Int) {
         val track = tracks.firstOrNull { it.id == id } ?: return
+        if (track.isAudio) return
         advance(System.nanoTime())
         updateRecording()
         heldRecordingNotesByTrack[id]?.toList()?.forEach { note ->
@@ -1051,6 +1153,10 @@ class LoopController(context: Context) {
 
     /** Record canonical GM drum roles, translate only when sending to synth. */
     private fun dispatchToTrack(track: Track, type: Int, a: Int, b: Int) {
+        if (track.isAudio) {
+            if (type == NativeEngine.CONTROLLER && a == 7) setTrackVolume(track.id, b)
+            return
+        }
         if (type == NativeEngine.CONTROLLER && a == 7) {
             setTrackVolume(track.id, b)
             return
@@ -1165,9 +1271,9 @@ class LoopController(context: Context) {
                         val target = if (route.action == "slot-volume")
                             tracks.getOrNull(route.noteBase) else track
                         if (target != null) {
-                            if (route.action == "pan") NativeEngine.midi(
+                            if (route.action == "pan" && !target.isAudio) NativeEngine.midi(
                                 NativeEngine.CONTROLLER, target.channel, 10, event.data2)
-                            else setTrackVolume(target.id, event.data2)
+                            else if (route.action != "pan") setTrackVolume(target.id, event.data2)
                         }
                     }
                     "metronome-volume" -> setMetronome(event.data2 >= 64)
@@ -1481,6 +1587,7 @@ class LoopController(context: Context) {
 
     @Synchronized fun setBpm(value: Int) {
         advance(System.nanoTime())
+        if (audioCapture != null) stopRecord(absoluteTick)
         bpm = value.coerceIn(40, 240)
         changed()
     }
@@ -1555,7 +1662,7 @@ class LoopController(context: Context) {
         val next = value.coerceIn(0, 127)
         if (t.volume == next) return
         t.volume = next
-        NativeEngine.midi(NativeEngine.CONTROLLER, t.channel, 7, next)
+        if (!t.isAudio) NativeEngine.midi(NativeEngine.CONTROLLER, t.channel, 7, next)
         changed()
     }
     @Synchronized fun setKeyboardBase(id: Int, value: Int) {
@@ -1572,6 +1679,13 @@ class LoopController(context: Context) {
             releaseDepartedInputs(previous, inputTargetIds)
             changed()
         }
+    }
+    @Synchronized fun addAudioTrack(): Boolean {
+        val channel = (-1 downTo -8).firstOrNull { c -> tracks.none { it.channel == c } } ?: return false
+        val id = nextId++
+        tracks += Track(id, channel, "音訊 ${-channel}", 0, 0, category = "音訊")
+        selectTrack(id)
+        return true
     }
     @Synchronized fun addTrack(drums: Boolean = false): Boolean {
         val used = tracks.map { it.channel }.toSet()
@@ -1680,6 +1794,7 @@ class LoopController(context: Context) {
     }
     @Synchronized fun setPreset(bank: Int, program: Int) {
         val track = tracks.firstOrNull { it.id == selectedId } ?: return
+        if (track.isAudio) return
         releaseLiveTrack(track.id)
         track.bank = bank
         track.program = program
@@ -1692,7 +1807,7 @@ class LoopController(context: Context) {
     }
     @Synchronized fun setCategory(category: String) {
         val t = tracks.firstOrNull { it.id == selectedId } ?: return
-        if (t.channel == 9 || category !in GmCategories.names) return
+        if (t.isAudio || t.channel == 9 || category !in GmCategories.names) return
         t.category = category
         changed()
     }
@@ -1701,7 +1816,7 @@ class LoopController(context: Context) {
         fontId: String, bank: Int, program: Int, presetName: String, category: String
     ) {
         val track = tracks.firstOrNull { it.id == selectedId } ?: return
-        if (fontId !in fontIndexes) return
+        if (track.isAudio || fontId !in fontIndexes) return
         releaseLiveTrack(track.id)
         track.fontId = fontId
         track.bank = bank
@@ -1726,7 +1841,7 @@ class LoopController(context: Context) {
 
     @Synchronized fun setFont(fontId: String) {
         val t = tracks.firstOrNull { it.id == selectedId } ?: return
-        if (!fontIndexes.containsKey(fontId)) return
+        if (t.isAudio || !fontIndexes.containsKey(fontId)) return
         releaseLiveTrack(t.id)
         t.fontId = fontId
         recoverInstrumentName(t)
@@ -1734,7 +1849,7 @@ class LoopController(context: Context) {
         changed()
     }
     @Synchronized fun replaceFont(oldId: String, replacementId: String = "gm") {
-        tracks.filter { it.fontId == oldId }.forEach {
+        tracks.filter { !it.isAudio && it.fontId == oldId }.forEach {
             releaseLiveTrack(it.id)
             it.fontId = replacementId
         }
@@ -1755,6 +1870,7 @@ class LoopController(context: Context) {
     }
     @Synchronized fun refreshPrograms() {
         for (t in tracks) {
+            if (t.isAudio) continue
             NativeEngine.selectFontPreset(
                 t.channel, fontIndexes[t.fontId] ?: 0,
                 t.bank, t.program
@@ -1795,6 +1911,9 @@ class LoopController(context: Context) {
 
     @Synchronized fun close() {
         if (recordingTrack != null || armedTrack != null) stopRecord(absoluteTick)
+        cancelAudio()
+        NativeEngine.setAudioClock(0, 0)
+        for (slot in 0 until 8) NativeEngine.setAudioClip(slot, ShortArray(0))
         save()
         scheduler.shutdownNow()
     }

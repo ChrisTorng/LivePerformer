@@ -52,7 +52,7 @@ private val laneColors = listOf(
     Color(0xFFFB7185), Color(0xFF34D399)
 )
 private fun laneColor(channel: Int): Color =
-    laneColors[if (channel == 9) 0 else (channel % 7) + 1]
+    laneColors[if (channel == 9) 0 else if (channel < 0) 5 else (channel % 7) + 1]
 
 @Composable
 private fun SmallAction(label: String, onClick: () -> Unit) {
@@ -207,6 +207,7 @@ fun PerformancePanel(
     onSystemSettings: () -> Unit,
     onInstrument: () -> Unit,
     onAddTrack: () -> Unit,
+    onRecord: () -> Unit = { looper.recordPause() },
     onDelete: (Int) -> Unit,
     onClear: (Int) -> Unit,
     onRename: (Int) -> Unit,
@@ -287,7 +288,7 @@ fun PerformancePanel(
                 state.recording -> "■"
                 state.armed -> "◎"
                 else -> "●"
-            }, "錄製", recording = state.recording || state.armed) { looper.recordPause() }
+            }, "錄製", recording = state.recording || state.armed) { onRecord() }
             MetronomeToggle(state.metronome) { looper.setMetronome(!state.metronome) }
             // BPM remains at its old position; TAP occupies the former Tap-record tile.
             Column(Modifier.width(63.dp).height(50.dp),
@@ -410,7 +411,7 @@ fun PerformancePanel(
                                 }
                                 DropdownMenu(expanded = showTrackMenu,
                                     onDismissRequest = { showTrackMenu = false }) {
-                                    DropdownMenuItem(text = { Text("變更樂器") }, onClick = {
+                                    if (!track.isAudio) DropdownMenuItem(text = { Text("變更樂器") }, onClick = {
                                         showTrackMenu = false
                                         onInstrument()
                                     })
@@ -576,6 +577,18 @@ private fun PianoRoll(
             drawLine(Color.White.copy(alpha = if (step % beatsPerBar == 0) .42f else .10f),
                 Offset(x, 0f), Offset(x, h),
                 strokeWidth = if (step % beatsPerBar == 0) 1.7.dp.toPx() else .6.dp.toPx())
+        }
+        if (track.isAudio) {
+            val color = Color(0xFF22D3EE).copy(alpha = if (audible) .9f else .25f)
+            val width = w * track.audioFraction
+            track.waveform.forEachIndexed { i, peak ->
+                val x = width * i / track.waveform.size
+                if (x >= w) return@forEachIndexed
+                val amplitude = peak * h * .47f
+                drawLine(color, Offset(x, h / 2 - amplitude), Offset(x, h / 2 + amplitude),
+                    strokeWidth = (width / track.waveform.size).coerceAtLeast(1f))
+            }
+            return@Canvas
         }
         val notes = track.noteRects
         if (notes.isEmpty()) return@Canvas
