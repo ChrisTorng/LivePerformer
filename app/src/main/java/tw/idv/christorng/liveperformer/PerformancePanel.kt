@@ -211,7 +211,8 @@ fun PerformancePanel(
     onDelete: (Int) -> Unit,
     onClear: (Int) -> Unit,
     onRename: (Int) -> Unit,
-    midiMessage: String
+    midiMessage: String,
+    showInputMeter: Boolean = false
 ) {
     val landscape = LocalConfiguration.current.orientation ==
         android.content.res.Configuration.ORIENTATION_LANDSCAPE
@@ -535,6 +536,14 @@ fun PerformancePanel(
                     KeyboardMode.MONITOR -> "▥"
                     KeyboardMode.HIDDEN -> "▧"
                 }, onKeyboardMode)
+            if (showInputMeter) {
+                Text("IN", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Canvas(Modifier.width(35.dp).height(8.dp)) {
+                    drawRect(Color(0xFF374151))
+                    drawRect(if (state.inputPeak >= .98f) Color(0xFFEF4444) else Color(0xFF34D399),
+                        size = Size(size.width * state.inputPeak.coerceIn(0f, 1f), size.height))
+                }
+            }
             Text(midiMessage, modifier = Modifier.weight(1f).padding(horizontal = 5.dp),
                 fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.primary)
