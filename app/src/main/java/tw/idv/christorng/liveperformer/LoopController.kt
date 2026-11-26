@@ -55,7 +55,10 @@ data class LoopView(
     val countInBars: Int,
     val countInBeatsLeft: Int,
     val tapCount: Int,
-    val audioError: String? = null
+    val audioError: String? = null,
+    val inputPeak: Float = 0f,
+    val inputRoute: String = "",
+    val inputTimestampReliable: Boolean = false
 )
 
 /**
@@ -103,6 +106,55 @@ class LoopController(context: Context) {
     private val sessionFile = android.util.AtomicFile(java.io.File(appContext.filesDir, "loop-session.json"))
     private var audioCapture: AudioLoopCapture? = null
     private var audioTargets: Set<Int> = emptySet()
+    private var inputDevice: android.media.AudioDeviceInfo? = null
+    private var inputEnabled = false
+    private var calibratingInput = false
+    private var monitorEnabled = false
+    private var monitorGain = .5f
+    private var compensationMs = 0f
+    private var audioFinalizeNs = 0L
+    private var takeCompensationMs = 0f
+    @Synchronized fun configureAudioInput(device: android.media.AudioDeviceInfo?, enabled: Boolean,
+        monitor: Boolean, gain: Float, offsetMs: Float) {
+        if (inputDevice?.id != device?.id) {
+            if (audioTargets.isNotEmpty() || armedTargets.any { id -> tracks.any { it.id == id && it.isAudio } })
+                stopRecord(absoluteTick)
+            cancelAudio()
+        }
+        inputDevice = device
+        inputEnabled = enabled
+        monitorEnabled = monitor
+        monitorGain = gain.coerceIn(0f, 1f)
+        compensationMs = offsetMs.coerceIn(-250f, 1500f)
+        if (enabled || monitor) ensureAudioInput()
+        else if (audioTargets.isEmpty() && armedTargets.none { id -> tracks.any { it.id == id && it.isAudio } }) cancelAudio()
+        audioCapture?.monitor = monitorEnabled
+        NativeEngine.setMonitorGain(if (monitorEnabled && audioCapture != null) monitorGain else 0f)
+        publish()
+    }
+    private fun ensureAudioInput() {
+        if (audioCapture != null || calibratingInput) return
+        if (appContext.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            audioError = "請授予麥克風錄音權限"
+            return
+        }
+        audioError = null
+        audioCapture = AudioLoopCapture(inputDevice).also { it.monitor = monitorEnabled; it.open() }
+        NativeEngine.setMonitorGain(if (monitorEnabled) monitorGain else 0f)
+    }
+    @Synchronized fun pauseInputForCalibration(): Boolean {
+        if (playing || armedTrack != null || recordingTrack != null || audioTargets.isNotEmpty()) return false
+        calibratingInput = true
+        cancelAudio()
+        publish()
+        return true
+    }
+    @Synchronized fun resumeInputAfterCalibration() {
+        calibratingInput = false
+        if (inputEnabled || monitorEnabled) ensureAudioInput()
+        publish()
+    }
     private val uploadedAudio = arrayOfNulls<ShortArray>(8)
     @Volatile var audioError: String? = null
         private set
@@ -110,9 +162,11 @@ class LoopController(context: Context) {
         60_000_000_000.0 / (bpm * LoopMath.PPQ)).toLong()
     private fun loopSamples(): Int = (loopNs() / 1e9 * LoopPcm.RATE).toInt()
     private fun cancelAudio() {
+        NativeEngine.setMonitorGain(0f)
         audioCapture?.cancel()
         audioCapture = null
         audioTargets = emptySet()
+        audioFinalizeNs = 0L
     }
     private fun finishAudio() {
         val input = audioCapture
@@ -124,8 +178,9 @@ class LoopController(context: Context) {
             dirty = true
             hasUnsavedChanges = true
         }
-        audioCapture = null
         audioTargets = emptySet()
+        audioFinalizeNs = 0L
+        if (!inputEnabled && !monitorEnabled) cancelAudio()
     }
     private fun syncAudio() {
         val solo = tracks.any { it.solo }
@@ -682,12 +737,13 @@ class LoopController(context: Context) {
                     it.volume, it.events.count { event -> event.type == NativeEngine.NOTE_ON },
                     it.fontId, it.category.ifBlank {
                         if (it.channel == 9) "鼓組" else GmCategories.names[GmCategories.family(it.program)]
-                    }, pianoNotes(it, length), if (it.id in audioTargets) audioCapture?.peak ?: 0f else if (it.isAudio) it.waveform.getOrNull((at.toFloat() / length / (it.pcm.size.toFloat() / loopSamples().coerceAtLeast(1)).coerceAtLeast(0.0001f) * 128).toInt()) ?: 0f else it.activityLevel, it.keyboardBase,
+                    }, pianoNotes(it, length), if (it.isAudio && (it.id in audioTargets || it.id in armedTargets || (!playing && it.id in inputTargetIds))) audioCapture?.peak ?: 0f else if (it.isAudio) it.waveform.getOrNull((at.toFloat() / length / (it.pcm.size.toFloat() / loopSamples().coerceAtLeast(1)).coerceAtLeast(0.0001f) * 128).toInt()) ?: 0f else it.activityLevel, it.keyboardBase,
                     if (recorded.isEmpty()) null else recorded.minOf { e -> e.note }..recorded.maxOf { e -> e.note },
                     it.isAudio, if (it.id in audioTargets) audioCapture?.preview() ?: it.waveform else it.waveform,
                     if (it.id in audioTargets) 1f else (it.pcm.size.toFloat() / loopSamples().coerceAtLeast(1)))
             }, midiRoutes.toList(), countInEnabled, countInBars, countLeft,
-            tapTracker.tapCount, audioError)
+            tapTracker.tapCount, audioError, audioCapture?.peak ?: 0f,
+            audioCapture?.routedName.orEmpty(), audioCapture?.timestampReliable ?: false)
     }
 
     private fun publish() {
@@ -779,7 +835,13 @@ class LoopController(context: Context) {
     }
 
     private fun stopRecord(at: Double) {
-        if (recordingTrack != null) { finishAudio(); finishRecordingPass(at) } else cancelAudio()
+        if (recordingTrack != null || audioTargets.isNotEmpty()) {
+            if (audioTargets.isNotEmpty()) finishAudio()
+            if (recordingTrack != null) finishRecordingPass(at)
+        } else {
+            audioCapture?.discardTake()
+            if (!inputEnabled && !monitorEnabled) cancelAudio()
+        }
         heldRecordingNotes.clear()
         heldRecordingNotesByTrack.clear()
         takeHasNotesByTrack.clear()
@@ -878,7 +940,8 @@ class LoopController(context: Context) {
             audioTargets = if (audioCapture != null) tracks.filter { it.isAudio && it.id in recordingTargets }.map { it.id }.toSet() else emptySet()
             if (audioTargets.isNotEmpty()) {
                 val elapsed = ((absoluteTick - recordStart) * 60_000_000_000.0 / (bpm * LoopMath.PPQ)).toLong()
-                audioCapture?.begin(clockNs - elapsed, loopSamples())
+                takeCompensationMs = compensationMs
+                audioCapture?.begin(clockNs - elapsed + (takeCompensationMs * 1_000_000).toLong(), loopSamples())
             }
             armedTrack = null
             heldRecordingNotesByTrack.clear()
@@ -897,7 +960,8 @@ class LoopController(context: Context) {
         if (recordingTrack != null) {
             val length = LoopMath.loopTicks(bars, beatsPerBar, beatUnit)
             while (absoluteTick >= recordStart + length) {
-                finishAudio()
+                if (audioTargets.isNotEmpty() && audioFinalizeNs == 0L)
+                    audioFinalizeNs = clockNs + ((takeCompensationMs.coerceAtLeast(0f) + 80f) * 1_000_000).toLong()
                 finishRecordingPass(recordStart + length - 1)
                 recordStart += length
                 recordingTargets = recordingTargets.filterTo(linkedSetOf()) { id ->
@@ -913,7 +977,16 @@ class LoopController(context: Context) {
         val now = System.nanoTime()
         advance(now)
         updateRecording()
-        audioCapture?.error?.let { audioError = it; cancelAudio() }
+        audioCapture?.error?.let {
+            audioError = it
+            cancelAudio()
+            armedTargets = armedTargets.filterTo(linkedSetOf()) { id -> tracks.any { it.id == id && !it.isAudio } }
+            recordingTargets = recordingTargets.filterTo(linkedSetOf()) { id -> tracks.any { it.id == id && !it.isAudio } }
+            armedTrack = armedTargets.firstOrNull()
+            recordingTrack = recordingTargets.firstOrNull()
+        }
+        if (audioFinalizeNs != 0L && now >= audioFinalizeNs) finishAudio()
+        if (!calibratingInput && audioCapture == null && audioError == null && (inputEnabled || monitorEnabled)) ensureAudioInput()
         syncAudio()
         if (countInActive) {
             // Count-in clicks continue even when the ordinary metronome is switched off.
@@ -973,10 +1046,11 @@ class LoopController(context: Context) {
 
     /** Transport has Play/Stop semantics, never resume-from-middle. */
     @Synchronized fun playStop() {
+        if (calibratingInput) return
         val now = System.nanoTime()
         advance(now)
         if (playing) {
-            if (recordingTrack != null || armedTrack != null) stopRecord(absoluteTick)
+            if (recordingTrack != null || armedTrack != null || audioTargets.isNotEmpty()) stopRecord(absoluteTick)
             playing = false
             countInActive = false
             NativeEngine.midi(NativeEngine.ALL_SOUNDS_OFF, 0, 0, 0)
@@ -1013,6 +1087,7 @@ class LoopController(context: Context) {
 
     /** Arm is non-destructive and does not start transport by itself. */
     @Synchronized fun recordPause() {
+        if (calibratingInput) return
         if (armedTrack == null && recordingTrack == null &&
             tracks.none { it.id in inputTargetIds }) return
         advance(System.nanoTime())
@@ -1024,8 +1099,8 @@ class LoopController(context: Context) {
         if (audioPermissionNeeded()) { audioError = "請授予麥克風錄音權限"; publish(); return }
         audioError = null
         if (tracks.any { it.isAudio && it.id in inputTargetIds }) {
-            cancelAudio()
-            audioCapture = AudioLoopCapture().also { it.open() }
+            if (audioTargets.isNotEmpty()) finishAudio()
+            ensureAudioInput()
         }
         preRollEvents.clear()
         takeHasNotes = false
@@ -1044,7 +1119,7 @@ class LoopController(context: Context) {
 
     @Synchronized fun clearTrack(id: Int) {
         val t = tracks.firstOrNull { it.id == id } ?: return
-        if (t.id in recordingTargets || t.id in armedTargets) stopRecord(absoluteTick)
+        if (t.id in recordingTargets || t.id in armedTargets || t.id in audioTargets) stopRecord(absoluteTick)
         t.events.clear()
         if (t.isAudio) t.replacePcm(ShortArray(0))
         releaseLiveTrack(t.id)
@@ -1587,7 +1662,7 @@ class LoopController(context: Context) {
 
     @Synchronized fun setBpm(value: Int) {
         advance(System.nanoTime())
-        if (audioCapture != null) stopRecord(absoluteTick)
+        if (audioTargets.isNotEmpty() || armedTargets.any { id -> tracks.any { it.id == id && it.isAudio } }) stopRecord(absoluteTick)
         bpm = value.coerceIn(40, 240)
         changed()
     }
@@ -1757,7 +1832,7 @@ class LoopController(context: Context) {
 
     @Synchronized fun removeTrack(id: Int) {
         val track = tracks.firstOrNull { it.id == id } ?: return
-        if (id in recordingTargets || id in armedTargets) stopRecord(absoluteTick)
+        if (id in recordingTargets || id in armedTargets || id in audioTargets) stopRecord(absoluteTick)
         releaseLiveTrack(track.id)
         tracks.remove(track)
         midiRoutes.removeAll { it.trackId == id }

@@ -215,6 +215,31 @@ private fun PerformerScreen() {
     var requestedOutputId by remember { mutableIntStateOf(0) } // Device IDs are ephemeral: do not persist.
     var outputs by remember { mutableStateOf(emptyList<AudioDeviceInfo>()) }
     var showOutputs by remember { mutableStateOf(false) }
+    var inputs by remember { mutableStateOf(emptyList<AudioDeviceInfo>()) }
+    var inputId by remember { mutableIntStateOf(0) }
+    var showInputs by remember { mutableStateOf(false) }
+    var inputMeter by remember { mutableStateOf(false) }
+    var monitor by remember { mutableStateOf(false) }
+    var monitorGain by remember { mutableFloatStateOf(.5f) }
+    var manualOffset by remember { mutableFloatStateOf(0f) }
+    var calibratedOffset by remember { mutableFloatStateOf(0f) }
+    var routeKey by remember { mutableStateOf("") }
+    fun calibrationKey(): String {
+        fun key(device: AudioDeviceInfo?) = device?.let { "${it.type}:${it.productName}:${if (android.os.Build.VERSION.SDK_INT >= 28) it.address else ""}" } ?: "automatic"
+        val inputKey = if (inputId == 0) "automatic:" + inputs.map { key(it) }.sorted().joinToString("|") else key(inputs.firstOrNull { it.id == inputId })
+        val outputKey = if (requestedOutputId == 0) "automatic:" + outputs.map { key(it) }.sorted().joinToString("|") else key(outputs.firstOrNull { it.id == requestedOutputId })
+        return "$inputKey → $outputKey"
+    }
+    fun applyInputSettings() {
+        val key = calibrationKey()
+        if (routeKey != key) {
+            routeKey = key
+            calibratedOffset = settings.getFloat("audioCal:$key", 0f)
+            manualOffset = settings.getFloat("audioManual:$key", 0f)
+        }
+        looper.configureAudioInput(inputs.firstOrNull { it.id == inputId }, inputMeter,
+            monitor, monitorGain, calibratedOffset + manualOffset)
+    }
     var restarting by remember { mutableStateOf(false) }
     var measuring by remember { mutableStateOf(false) }
     var testCount by remember { mutableIntStateOf(3) }
@@ -263,11 +288,15 @@ private fun PerformerScreen() {
     }
 
     fun scanAudioOutputs() {
+        inputs = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).filter { it.isSource }.sortedBy { it.id }
+        if (inputId != 0 && inputs.none { it.id == inputId }) { inputId = 0; monitor = false }
         outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
             .filter { it.isSink }.sortedBy { it.id }
         if (requestedOutputId != 0 && outputs.none { it.id == requestedOutputId }) {
+            monitor = false
             requestedOutputId = 0
         }
+        applyInputSettings()
     }
 
     // Audio route hotplug and AAudio stream disconnect are handled outside the audio callback.
@@ -293,20 +322,32 @@ private fun PerformerScreen() {
 
     fun runMeasurement() {
         if (measuring) return
+        val explicitRoutes = inputId != 0 && requestedOutputId != 0
+        val outputConfirmed = NativeEngine.status().contains("outputId $requestedOutputId ·")
+        if (!looper.pauseInputForCalibration()) { measurement = "請先停止播放及錄音。"; return }
+        val device = inputs.firstOrNull { it.id == inputId }
+        val key = calibrationKey()
         scope.launch {
             measuring = true
             val before = NativeEngine.xrunCount()
             val results = mutableListOf<String>()
             try {
+                delay(150)
                 for (i in 1..testCount) {
                     measurement = "正在量測 $i / $testCount 次…（測試期間可能增加 xRuns）"
-                    results += withContext(Dispatchers.IO) { PulseLatencyTester.measure() }
+                    results += withContext(Dispatchers.IO) { PulseLatencyTester.measure(device) }
                 }
                 val after = NativeEngine.xrunCount()
                 measurement = PulseLatencyTester.summarize(results, before, after)
+                val median = PulseLatencyTester.compensationMedian(results)
+                if (median != null && explicitRoutes && outputConfirmed && key == calibrationKey()) {
+                    calibratedOffset = median
+                    settings.edit().putFloat("audioCal:$key", median).apply()
+                    measurement += "\n已套用自動補償 ${median} ms。"
+                } else measurement += if (!explicitRoutes || !outputConfirmed) "\n僅供診斷：請先指定並確認輸入、輸出裝置才能儲存校正值。" else "\n未取得穩定且可信的校正值，保留原設定。"
             } catch (ex: Exception) {
                 measurement = "量測失敗：${ex.message}"
-            } finally { measuring = false }
+            } finally { measuring = false; applyInputSettings(); looper.resumeInputAfterCalibration() }
         }
     }
     fun guardedLoad(action: () -> Unit) {
@@ -496,6 +537,13 @@ private fun PerformerScreen() {
     ) { granted ->
         if (granted) runMeasurement() else measurement = "未授予麥克風權限，無法回錄。"
     }
+    val inputPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) applyInputSettings() else { inputMeter = false; monitor = false; applyInputSettings() }
+    }
+    fun enableInput() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) applyInputSettings()
+        else inputPermission.launch(Manifest.permission.RECORD_AUDIO)
+    }
     val recordPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         if (it) looper.recordPause() else message = "未授予麥克風權限"
     }
@@ -572,16 +620,13 @@ private fun PerformerScreen() {
         scanAudioOutputs()
         val deviceCallback = object : AudioDeviceCallback() {
             override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
-                if (addedDevices.any { it.isSink }) {
-                    scanAudioOutputs()
-                    routeRevision++
-                }
+                if (addedDevices.any { it.isSink || it.isSource }) scanAudioOutputs()
+                if (addedDevices.any { it.isSink }) routeRevision++
             }
             override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
-                if (removedDevices.any { it.isSink }) {
-                    scanAudioOutputs()
-                    routeRevision++
-                }
+                if (removedDevices.any { it.isSink }) monitor = false
+                if (removedDevices.any { it.isSink || it.isSource }) scanAudioOutputs()
+                if (removedDevices.any { it.isSink }) routeRevision++
             }
         }
         audioManager.registerAudioDeviceCallback(deviceCallback, Handler(Looper.getMainLooper()))
@@ -1285,13 +1330,17 @@ private fun PerformerScreen() {
                 ExposedDropdownMenu(expanded = showOutputs, onDismissRequest = { showOutputs = false }) {
                     DropdownMenuItem(text = { Text("自動跟隨系統") }, onClick = {
                         showOutputs = false
+                        monitor = false
                         requestedOutputId = 0
+                        applyInputSettings()
                         routeRevision++
                     })
                     outputs.forEach { output ->
                         DropdownMenuItem(text = { Text(audioOutputName(output)) }, onClick = {
                             showOutputs = false
+                            monitor = false
                             requestedOutputId = output.id
+                            applyInputSettings()
                             routeRevision++
                         })
                     }
@@ -1301,6 +1350,52 @@ private fun PerformerScreen() {
                 Text(if (restarting) "重新連線中…" else "重新連接音訊")
             }
     
+            HorizontalDivider()
+            Text("音訊輸入", style = MaterialTheme.typography.titleMedium)
+            ExposedDropdownMenuBox(expanded = showInputs, onExpandedChange = { showInputs = it && !measuring && !loopState.armed && !loopState.recording }) {
+                OutlinedTextField(value = inputs.firstOrNull { it.id == inputId }?.let { "${it.productName}（ID ${it.id}）" } ?: "自動跟隨系統",
+                    onValueChange = {}, readOnly = true, singleLine = true,
+                    label = { Text("輸入裝置") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(showInputs) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable))
+                ExposedDropdownMenu(expanded = showInputs, onDismissRequest = { showInputs = false }) {
+                    DropdownMenuItem(text = { Text("自動跟隨系統") }, onClick = {
+                        showInputs = false; inputId = 0; applyInputSettings()
+                    })
+                    inputs.forEach { device ->
+                        DropdownMenuItem(text = { Text("${device.productName}（ID ${device.id}，類型 ${device.type}）") },
+                            onClick = { showInputs = false; inputId = device.id; applyInputSettings() })
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("輸入音量監測", Modifier.weight(1f))
+                Switch(checked = inputMeter, enabled = !measuring, onCheckedChange = {
+                    inputMeter = it
+                    if (it) enableInput() else applyInputSettings()
+                })
+            }
+            LinearProgressIndicator(progress = { loopState.inputPeak.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+            Text("輸入峰值：${if (loopState.inputPeak > 0f) "%.1f dBFS".format(java.util.Locale.US, 20 * kotlin.math.log10(loopState.inputPeak.toDouble())) else "—"} · ${loopState.inputRoute.ifBlank { "未啟用" }}")
+            Text(if (loopState.inputTimestampReliable) "硬體錄音時間戳可用" else "尚無可靠時間戳（使用讀取時間估算）")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("即時監聽（建議使用有線耳機）", Modifier.weight(1f))
+                Switch(checked = monitor, enabled = !measuring, onCheckedChange = {
+                    monitor = it
+                    if (it) enableInput() else applyInputSettings()
+                })
+            }
+            Text("監聽音量：${(monitorGain * 100).toInt()}%")
+            Slider(monitorGain, { monitorGain = it; applyInputSettings() }, enabled = !measuring)
+            Text("錄音延遲補償：${"%.1f".format(java.util.Locale.US, calibratedOffset + manualOffset)} ms")
+            Text("自動校正 ${calibratedOffset} ms · 手動微調 ${manualOffset.toInt()} ms")
+            Slider(manualOffset, { manualOffset = it; settings.edit().putFloat("audioManual:${calibrationKey()}", it).apply(); applyInputSettings() },
+                valueRange = -100f..100f, enabled = !measuring && !loopState.recording && !loopState.armed)
+            Row {
+                TextButton(onClick = { manualOffset = 0f; settings.edit().putFloat("audioManual:${calibrationKey()}", 0f).apply(); applyInputSettings() }) { Text("微調歸零") }
+                TextButton(onClick = { calibratedOffset = 0f; settings.edit().remove("audioCal:${calibrationKey()}").apply(); applyInputSettings() }) { Text("清除校正") }
+            }
+            Text("請先指定輸入及輸出裝置，再以回錄測試校正。正值讓錄音提前；自動時間戳與校正值不重複扣除。", style = MaterialTheme.typography.bodySmall)
             HorizontalDivider()
             Text("音訊診斷", style = MaterialTheme.typography.titleMedium)
             Text(audioStatus, style = MaterialTheme.typography.bodySmall)
@@ -1318,11 +1413,11 @@ private fun PerformerScreen() {
                     enabled = !measuring, label = { Text("5 次") })
             }
             Text(measurement, style = MaterialTheme.typography.bodySmall)
-            Button(enabled = !measuring && !loading, onClick = {
+            Button(enabled = !measuring && !loading && !restarting, onClick = {
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
                     PackageManager.PERMISSION_GRANTED) runMeasurement()
                 else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-            }) { Text(if (measuring) "量測中…" else "開始多次回錄量測") }
+            }) { Text(if (measuring) "量測中…" else "自動校正錄音延遲") }
             } else if (settingsPage == SettingsPage.SYSTEM_FONTS) {
             Text("音色庫", style = MaterialTheme.typography.titleMedium)
             fonts.forEach { font ->
@@ -1427,6 +1522,7 @@ private fun PerformerScreen() {
                 onDelete = { id -> pendingTrackRemoval = id },
                 onClear = { id -> pendingTrackClear = id },
                 midiMessage = loopState.audioError ?: lastMidiMessage,
+                showInputMeter = inputMeter || monitor || loopState.armed || loopState.recording,
                 onRename = { id ->
                     renameTrackId = id
                     renameValue = loopState.tracks.firstOrNull { it.id == id }?.name.orEmpty()

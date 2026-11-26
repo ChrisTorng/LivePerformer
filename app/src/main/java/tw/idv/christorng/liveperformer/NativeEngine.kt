@@ -9,6 +9,8 @@ object NativeEngine {
     external fun setAudioClip(slot: Int, pcm: ShortArray)
     external fun setAudioVolume(slot: Int, volume: Float)
     external fun setAudioClock(epochNs: Long, loopNs: Long)
+    external fun setMonitorGain(gain: Float)
+    external fun pushMonitorPcm(pcm: ShortArray, count: Int)
     external fun consumeReconnectRequest(): Boolean
     external fun stop()
     external fun loadSf2(path: String): Boolean
