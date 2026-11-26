@@ -171,6 +171,7 @@ private fun PerformerScreen() {
     var showPresets by remember { mutableStateOf(false) }
     var settingsPage by remember { mutableStateOf<SettingsPage?>(null) }
     var addingInstrument by remember { mutableStateOf(false) }
+    var showAddTrackChoice by remember { mutableStateOf(false) }
     var showLoadChoices by remember { mutableStateOf(false) }
     var pendingLoadAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var saveBeforeLoad by remember { mutableStateOf(false) }
@@ -495,6 +496,9 @@ private fun PerformerScreen() {
     ) { granted ->
         if (granted) runMeasurement() else measurement = "未授予麥克風權限，無法回錄。"
     }
+    val recordPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        if (it) looper.recordPause() else message = "未授予麥克風權限"
+    }
     fun handleFontSelection(uri: Uri?) {
         if (uri != null && !loading && !importing) {
             importing = true
@@ -695,7 +699,7 @@ private fun PerformerScreen() {
         AlertDialog(
             onDismissRequest = { pendingTrackClear = null },
             title = { Text("清除 $name 的錄製？") },
-            text = { Text("此操作會移除該軌所有已錄製音符，保留樂器與音軌設定。") },
+            text = { Text("此操作會移除該軌所有錄製內容，保留音軌設定。") },
             confirmButton = { TextButton(onClick = {
                 looper.clearTrack(id)
                 pendingTrackClear = null
@@ -989,6 +993,24 @@ private fun PerformerScreen() {
         )
     }
 
+    if (showAddTrackChoice) {
+        AlertDialog(onDismissRequest = { showAddTrackChoice = false },
+            title = { Text("新增音軌") },
+            text = {
+                Column {
+                    TextButton(onClick = {
+                        showAddTrackChoice = false
+                        addingInstrument = true
+                        showInstrumentPicker = true
+                    }) { Text("MIDI 樂器軌") }
+                    TextButton(onClick = {
+                        showAddTrackChoice = false
+                        if (!looper.addAudioTrack()) message = "已達 8 個音訊軌上限"
+                    }) { Text("Audio 音訊軌") }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showAddTrackChoice = false }) { Text("取消") } })
+    }
     if (showInstrumentPicker && (addingInstrument || selectedTrack != null)) {
         SoundFontPicker(
             track = if (addingInstrument) null else selectedTrack,
@@ -1397,13 +1419,14 @@ private fun PerformerScreen() {
                     addingInstrument = false
                     showInstrumentPicker = true
                 },
-                onAddTrack = {
-                    addingInstrument = true
-                    showInstrumentPicker = true
+                onAddTrack = { showAddTrackChoice = true },
+                onRecord = {
+                    if (looper.audioPermissionNeeded()) recordPermission.launch(Manifest.permission.RECORD_AUDIO)
+                    else looper.recordPause()
                 },
                 onDelete = { id -> pendingTrackRemoval = id },
                 onClear = { id -> pendingTrackClear = id },
-                midiMessage = lastMidiMessage,
+                midiMessage = looper.audioError ?: lastMidiMessage,
                 onRename = { id ->
                     renameTrackId = id
                     renameValue = loopState.tracks.firstOrNull { it.id == id }?.name.orEmpty()

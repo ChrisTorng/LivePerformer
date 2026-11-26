@@ -6,6 +6,9 @@ object NativeEngine {
     external fun restart(deviceId: Int): Boolean
     external fun setGain(gain: Float)
     external fun outputPeak(): Float
+    external fun setAudioClip(slot: Int, pcm: ShortArray)
+    external fun setAudioVolume(slot: Int, volume: Float)
+    external fun setAudioClock(epochNs: Long, loopNs: Long)
     external fun consumeReconnectRequest(): Boolean
     external fun stop()
     external fun loadSf2(path: String): Boolean
