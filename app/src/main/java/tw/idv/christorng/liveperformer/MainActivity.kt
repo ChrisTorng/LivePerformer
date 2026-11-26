@@ -225,7 +225,7 @@ private fun PerformerScreen() {
     var calibratedOffset by remember { mutableFloatStateOf(0f) }
     var routeKey by remember { mutableStateOf("") }
     fun calibrationKey(): String {
-        fun key(device: AudioDeviceInfo?) = device?.let { "${it.type}:${it.productName}:${it.address}" } ?: "automatic"
+        fun key(device: AudioDeviceInfo?) = device?.let { "${it.type}:${it.productName}:${if (android.os.Build.VERSION.SDK_INT >= 28) it.address else ""}" } ?: "automatic"
         val inputKey = if (inputId == 0) "automatic:" + inputs.map { key(it) }.sorted().joinToString("|") else key(inputs.firstOrNull { it.id == inputId })
         val outputKey = if (requestedOutputId == 0) "automatic:" + outputs.map { key(it) }.sorted().joinToString("|") else key(outputs.firstOrNull { it.id == requestedOutputId })
         return "$inputKey → $outputKey"
@@ -293,6 +293,7 @@ private fun PerformerScreen() {
         outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
             .filter { it.isSink }.sortedBy { it.id }
         if (requestedOutputId != 0 && outputs.none { it.id == requestedOutputId }) {
+            monitor = false
             requestedOutputId = 0
         }
         applyInputSettings()
@@ -321,10 +322,8 @@ private fun PerformerScreen() {
 
     fun runMeasurement() {
         if (measuring) return
-        if (inputId == 0 || requestedOutputId == 0) {
-            measurement = "請先明確選擇輸入和輸出裝置，再執行校正，避免將錯誤的裝置延遲套用到其他路徑。"
-            return
-        }
+        val explicitRoutes = inputId != 0 && requestedOutputId != 0
+        val outputConfirmed = NativeEngine.status().contains("outputId $requestedOutputId ·")
         if (!looper.pauseInputForCalibration()) { measurement = "請先停止播放及錄音。"; return }
         val device = inputs.firstOrNull { it.id == inputId }
         val key = calibrationKey()
@@ -341,11 +340,11 @@ private fun PerformerScreen() {
                 val after = NativeEngine.xrunCount()
                 measurement = PulseLatencyTester.summarize(results, before, after)
                 val median = PulseLatencyTester.compensationMedian(results)
-                if (median != null && key == calibrationKey()) {
+                if (median != null && explicitRoutes && outputConfirmed && key == calibrationKey()) {
                     calibratedOffset = median
                     settings.edit().putFloat("audioCal:$key", median).apply()
                     measurement += "\n已套用自動補償 ${median} ms。"
-                } else measurement += "\n未取得穩定且可信的校正值，保留原設定。"
+                } else measurement += if (!explicitRoutes || !outputConfirmed) "\n僅供診斷：請先指定並確認輸入、輸出裝置才能儲存校正值。" else "\n未取得穩定且可信的校正值，保留原設定。"
             } catch (ex: Exception) {
                 measurement = "量測失敗：${ex.message}"
             } finally { measuring = false; applyInputSettings(); looper.resumeInputAfterCalibration() }
@@ -621,16 +620,13 @@ private fun PerformerScreen() {
         scanAudioOutputs()
         val deviceCallback = object : AudioDeviceCallback() {
             override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
-                if (addedDevices.any { it.isSink }) {
-                    scanAudioOutputs()
-                    routeRevision++
-                }
+                if (addedDevices.any { it.isSink || it.isSource }) scanAudioOutputs()
+                if (addedDevices.any { it.isSink }) routeRevision++
             }
             override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
-                if (removedDevices.any { it.isSink }) {
-                    scanAudioOutputs()
-                    routeRevision++
-                }
+                if (removedDevices.any { it.isSink }) monitor = false
+                if (removedDevices.any { it.isSink || it.isSource }) scanAudioOutputs()
+                if (removedDevices.any { it.isSink }) routeRevision++
             }
         }
         audioManager.registerAudioDeviceCallback(deviceCallback, Handler(Looper.getMainLooper()))
@@ -1334,6 +1330,7 @@ private fun PerformerScreen() {
                 ExposedDropdownMenu(expanded = showOutputs, onDismissRequest = { showOutputs = false }) {
                     DropdownMenuItem(text = { Text("自動跟隨系統") }, onClick = {
                         showOutputs = false
+                        monitor = false
                         requestedOutputId = 0
                         applyInputSettings()
                         routeRevision++
@@ -1341,6 +1338,7 @@ private fun PerformerScreen() {
                     outputs.forEach { output ->
                         DropdownMenuItem(text = { Text(audioOutputName(output)) }, onClick = {
                             showOutputs = false
+                            monitor = false
                             requestedOutputId = output.id
                             applyInputSettings()
                             routeRevision++
@@ -1415,7 +1413,7 @@ private fun PerformerScreen() {
                     enabled = !measuring, label = { Text("5 次") })
             }
             Text(measurement, style = MaterialTheme.typography.bodySmall)
-            Button(enabled = !measuring && !loading, onClick = {
+            Button(enabled = !measuring && !loading && !restarting, onClick = {
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
                     PackageManager.PERMISSION_GRANTED) runMeasurement()
                 else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)

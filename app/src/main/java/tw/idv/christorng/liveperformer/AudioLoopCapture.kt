@@ -85,9 +85,10 @@ internal class AudioLoopCapture(private val device: AudioDeviceInfo? = null) {
                 var frames = 0L
                 while (running) {
                     val count = input.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
+                    if (!running) break
                     if (count <= 0) throw IllegalStateException("麥克風讀取失敗：$count")
                     val end = System.nanoTime()
-                    timestampReliable = input.getTimestamp(stamp, AudioTimestamp.TIMEBASE_MONOTONIC) == AudioRecord.SUCCESS
+                    timestampReliable = input.getTimestamp(stamp, AudioTimestamp.TIMEBASE_MONOTONIC) == AudioRecord.SUCCESS && stamp.nanoTime > 0L
                     val start = if (timestampReliable)
                         stamp.nanoTime + (frames - stamp.framePosition) * 1000000000L / LoopPcm.RATE
                     else end - count * 1000000000L / LoopPcm.RATE

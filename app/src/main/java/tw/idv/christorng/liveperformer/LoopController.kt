@@ -977,7 +977,14 @@ class LoopController(context: Context) {
         val now = System.nanoTime()
         advance(now)
         updateRecording()
-        audioCapture?.error?.let { audioError = it; cancelAudio() }
+        audioCapture?.error?.let {
+            audioError = it
+            cancelAudio()
+            armedTargets = armedTargets.filterTo(linkedSetOf()) { id -> tracks.any { it.id == id && !it.isAudio } }
+            recordingTargets = recordingTargets.filterTo(linkedSetOf()) { id -> tracks.any { it.id == id && !it.isAudio } }
+            armedTrack = armedTargets.firstOrNull()
+            recordingTrack = recordingTargets.firstOrNull()
+        }
         if (audioFinalizeNs != 0L && now >= audioFinalizeNs) finishAudio()
         if (!calibratingInput && audioCapture == null && audioError == null && (inputEnabled || monitorEnabled)) ensureAudioInput()
         syncAudio()
@@ -1039,6 +1046,7 @@ class LoopController(context: Context) {
 
     /** Transport has Play/Stop semantics, never resume-from-middle. */
     @Synchronized fun playStop() {
+        if (calibratingInput) return
         val now = System.nanoTime()
         advance(now)
         if (playing) {
