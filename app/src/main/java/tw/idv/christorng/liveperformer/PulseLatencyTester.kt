@@ -48,7 +48,18 @@ object PulseLatencyTester {
             "不是實體 MIDI 按鍵到耳機延遲；3–5 次的 P95 僅供初步參考。"
     }
 
-    fun measure(): String {
+    fun compensationMedian(measurements: List<String>): Float? {
+        val pattern = Regex("輸出 callback → 麥克風捕捉：([0-9.]+) ms")
+        val confidence = Regex("相關性 ([0-9.]+)")
+        val valid = measurements.mapNotNull { s ->
+            val score = confidence.find(s)?.groupValues?.get(1)?.toFloatOrNull() ?: 0f
+            if (score < .5f) null else pattern.find(s)?.groupValues?.get(1)?.toFloatOrNull()?.takeIf { it in 0f..1500f }
+        }.sorted()
+        if (valid.size < 2 || valid.size * 2 <= measurements.size || valid.last() - valid.first() > 30f) return null
+        return valid[valid.size / 2]
+    }
+
+    fun measure(device: android.media.AudioDeviceInfo? = null): String {
         val fmt = AudioFormat.Builder().setSampleRate(RATE)
             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
             .setChannelMask(AudioFormat.CHANNEL_IN_MONO).build()
@@ -77,6 +88,7 @@ object PulseLatencyTester {
             val input = recorder ?: return "麥克風無法啟動，請確認權限。"
             val pcm = ShortArray(CAPTURE)
             val block = ShortArray(512)
+            if (device != null && !input.setPreferredDevice(device)) return "無法指定音訊輸入裝置。"
             input.startRecording()
             if (input.recordingState != AudioRecord.RECORDSTATE_RECORDING)
                 return "錄音啟動失敗（裝置可能被其他 App 佔用）。"
@@ -94,6 +106,7 @@ object PulseLatencyTester {
                 }
             }
             val routedInput = input.routedDevice
+            if (device != null && routedInput?.id != device.id) return "實際輸入路徑與指定裝置不同。"
             val routedInputText = routedInput?.let {
                 "輸入路徑 ${it.productName}（ID ${it.id}，類型 ${it.type}）"
             } ?: "輸入路徑：系統未回報"

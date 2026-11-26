@@ -1,6 +1,7 @@
 package tw.idv.christorng.liveperformer
 
 import android.annotation.SuppressLint
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.AudioTimestamp
@@ -41,12 +42,21 @@ internal object LoopPcm {
 }
 
 /** Arm opens the microphone before the count-in ends. Capture is indexed by monotonic time. */
-internal class AudioLoopCapture {
+internal class AudioLoopCapture(private val device: AudioDeviceInfo? = null) {
     @Volatile private var running = false
     @Volatile var error: String? = null
         private set
     @Volatile var peak = 0f
         private set
+    @Volatile var monitor = false
+    @Volatile var timestampReliable = false
+        private set
+    @Volatile var routedName = ""
+        private set
+    private val history = ShortArray(LoopPcm.RATE)
+    private var historyEndNs = 0L
+    private var historySize = 0
+    private var historyPos = 0
     private var epoch = 0L
     private var pcm = ShortArray(0)
     private var written = 0
@@ -66,7 +76,9 @@ internal class AudioLoopCapture {
                 recorder = input
                 require(input.state == AudioRecord.STATE_INITIALIZED) { "無法開啟麥克風" }
                 if (!running) return@Thread
+                if (device != null) require(input.setPreferredDevice(device)) { "無法指定輸入裝置" }
                 input.startRecording()
+                require(input.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "無法開始錄音" }
                 val buffer = ShortArray(480)
                 val stamp = AudioTimestamp()
                 var frames = 0L
@@ -74,9 +86,14 @@ internal class AudioLoopCapture {
                     val count = input.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
                     if (count <= 0) throw IllegalStateException("麥克風讀取失敗：$count")
                     val end = System.nanoTime()
-                    val start = if (input.getTimestamp(stamp, AudioTimestamp.TIMEBASE_MONOTONIC) == AudioRecord.SUCCESS)
+                    timestampReliable = input.getTimestamp(stamp, AudioTimestamp.TIMEBASE_MONOTONIC) == AudioRecord.SUCCESS
+                    val start = if (timestampReliable)
                         stamp.nanoTime + (frames - stamp.framePosition) * 1000000000L / LoopPcm.RATE
                     else end - count * 1000000000L / LoopPcm.RATE
+                    val actual = input.routedDevice
+                    routedName = actual?.productName?.toString().orEmpty()
+                    if (device != null && actual != null && actual.id != device.id) throw IllegalStateException("指定輸入裝置未成功路由")
+                    if (running && monitor) NativeEngine.pushMonitorPcm(buffer, count)
                     frames += count
                     append(buffer, count, start)
                 }
@@ -94,12 +111,26 @@ internal class AudioLoopCapture {
         pcm = ShortArray(samples.coerceIn(1, LoopPcm.MAX_SAMPLES))
         written = 0
         bins.fill(0f)
+        if (historySize > 0) {
+            val prior = ShortArray(historySize) { history[(historyPos - historySize + it + history.size) % history.size] }
+            place(prior, prior.size, historyEndNs - prior.size * 1000000000L / LoopPcm.RATE)
+        }
     }
     @Synchronized private fun append(buffer: ShortArray, count: Int, start: Long) {
         if (!running) return
         var max = 0
         for (i in 0 until count) max = maxOf(max, abs(buffer[i].toInt()))
         peak = max / 32768f
+        if (historyEndNs != 0L && kotlin.math.abs(start - historyEndNs) > 100_000_000L) historySize = 0
+        for (i in 0 until count) {
+            history[historyPos] = buffer[i]
+            historyPos = (historyPos + 1) % history.size
+        }
+        historySize = minOf(history.size, historySize + count)
+        historyEndNs = start + count * 1000000000L / LoopPcm.RATE
+        place(buffer, count, start)
+    }
+    private fun place(buffer: ShortArray, count: Int, start: Long) {
         if (epoch == 0L) return
         val offset = ((start - epoch) / 1e9 * LoopPcm.RATE).roundToInt()
         val source = maxOf(0, -offset)
@@ -116,11 +147,11 @@ internal class AudioLoopCapture {
     }
     @Synchronized fun preview(): List<Float> = bins.toList()
     @Synchronized fun finish(): ShortArray? {
-        running = false
         val result = if (written > 0 && error == null) pcm.copyOf(written) else null
         pcm = ShortArray(0)
         epoch = 0
         return result
     }
-    @Synchronized fun cancel() { running = false; pcm = ShortArray(0); epoch = 0 }
+    @Synchronized fun discardTake() { pcm = ShortArray(0); epoch = 0; written = 0 }
+    @Synchronized fun cancel() { monitor = false; running = false; discardTake() }
 }

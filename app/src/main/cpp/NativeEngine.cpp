@@ -115,6 +115,12 @@ class Engine final : public oboe::AudioStreamDataCallback, public oboe::AudioStr
     std::mutex audioWriteMutex_;
     std::vector<Pcm*> audioRetired_;
     std::atomic<int64_t> audioEpoch_{0}, audioPeriod_{0};
+    static constexpr uint32_t MonitorCapacity = 4096;
+    std::array<int16_t, MonitorCapacity> monitorPcm_{};
+    std::atomic<uint32_t> monitorHead_{0}, monitorTail_{0};
+    std::atomic<float> monitorGain_{0.f};
+    std::mutex monitorProducerMutex_; // Not used by the callback.
+    double monitorPhase_{0.0};
     float lastAppliedGain_{-1.0f}; // Audio callback only.
     std::atomic<bool> overrun_{false};
     std::atomic<int64_t> lastDispatchUs_{-1};
@@ -207,6 +213,37 @@ public:
             }
         }
         audioReading_.store(false);
+    }
+    void setMonitorGain(float v) { monitorGain_.store(std::clamp(v, 0.f, 1.f)); }
+    void pushMonitorPcm(const int16_t* pcm, int count) {
+        std::lock_guard<std::mutex> guard(monitorProducerMutex_);
+        if (monitorGain_.load() <= 0.f) return;
+        auto head = monitorHead_.load(std::memory_order_relaxed);
+        const auto tail = monitorTail_.load(std::memory_order_acquire);
+        const auto n = std::min<uint32_t>(MonitorCapacity - (head - tail), count);
+        for (uint32_t i = 0; i < n; ++i) monitorPcm_[(head+i) % MonitorCapacity] = pcm[i];
+        monitorHead_.store(head+n, std::memory_order_release);
+    }
+    void mixMonitor(float* output, int frames, int rate) noexcept {
+        auto tail = monitorTail_.load(std::memory_order_relaxed);
+        const auto head = monitorHead_.load(std::memory_order_acquire);
+        const float gain = monitorGain_.load() * gain_.load() / 0.8f;
+        if (gain <= 0.f || rate <= 0) {
+            monitorTail_.store(head, std::memory_order_release);
+            monitorPhase_ = 0;
+            return;
+        }
+        if (head - tail > 1440) tail = head - 960;
+        for (int i = 0; i < frames; ++i) {
+            if (tail == head) { monitorPhase_ = 0; continue; }
+            const float sample = monitorPcm_[tail % MonitorCapacity] * (gain / 32768.f);
+            output[i*2] += sample; output[i*2+1] += sample;
+            monitorPhase_ += 48000.0 / rate;
+            const auto step = static_cast<uint32_t>(monitorPhase_);
+            monitorPhase_ -= step;
+            tail += std::min(step, head-tail);
+        }
+        monitorTail_.store(tail, std::memory_order_release);
     }
     float outputPeak() noexcept { return outputPeak_.exchange(0.f, std::memory_order_relaxed); }
     void setGain(float gain) noexcept {
@@ -395,6 +432,7 @@ public:
             --clickRemaining_;
         }
         mixAudio(output, frames, sampleRate);
+        mixMonitor(output, frames, sampleRate);
         float peak = 0.f;
         for (int i = 0; i < frames * 2; ++i) {
             output[i] = std::clamp(output[i], -1.f, 1.f);
@@ -413,6 +451,13 @@ Engine& engine() { static Engine instance; return instance; }
 } // namespace
 
 extern "C" {
+JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_setMonitorGain(JNIEnv*, jobject, jfloat gain) { engine().setMonitorGain(gain); }
+JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_pushMonitorPcm(JNIEnv* env, jobject, jshortArray pcm, jint count) {
+    if (count <= 0 || count > 480 || count > env->GetArrayLength(pcm)) return;
+    std::array<jshort, 480> block{};
+    env->GetShortArrayRegion(pcm, 0, count, block.data());
+    if (!env->ExceptionCheck()) engine().pushMonitorPcm(reinterpret_cast<const int16_t*>(block.data()), count);
+}
 JNIEXPORT void JNICALL Java_tw_idv_christorng_liveperformer_NativeEngine_setAudioClip(JNIEnv* env, jobject, jint slot, jshortArray pcm) {
     const auto count = env->GetArrayLength(pcm);
     if (count < 0 || count > 48000 * 48) return;
