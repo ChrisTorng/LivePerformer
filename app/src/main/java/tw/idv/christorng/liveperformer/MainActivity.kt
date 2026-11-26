@@ -1011,7 +1011,7 @@ private fun PerformerScreen() {
             },
             confirmButton = { TextButton(onClick = { showAddTrackChoice = false }) { Text("取消") } })
     }
-    if (showInstrumentPicker && (addingInstrument || selectedTrack != null)) {
+    if (showInstrumentPicker && (addingInstrument || selectedTrack?.isAudio == false)) {
         SoundFontPicker(
             track = if (addingInstrument) null else selectedTrack,
             fonts = fonts,

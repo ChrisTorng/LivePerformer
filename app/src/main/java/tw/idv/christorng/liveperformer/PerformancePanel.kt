@@ -52,7 +52,7 @@ private val laneColors = listOf(
     Color(0xFFFB7185), Color(0xFF34D399)
 )
 private fun laneColor(channel: Int): Color =
-    laneColors[if (channel == 9) 0 else (channel % 7) + 1]
+    laneColors[if (channel == 9) 0 else if (channel < 0) 5 else (channel % 7) + 1]
 
 @Composable
 private fun SmallAction(label: String, onClick: () -> Unit) {

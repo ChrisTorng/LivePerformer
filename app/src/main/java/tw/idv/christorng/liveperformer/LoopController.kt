@@ -114,7 +114,8 @@ class LoopController(context: Context) {
         audioTargets = emptySet()
     }
     private fun finishAudio() {
-        val input = audioCapture ?: return
+        val input = audioCapture
+        if (input == null) { audioTargets = emptySet(); return }
         val result = input.finish()
         audioError = input.error ?: if (result == null) "未取得錄音，保留原音訊" else null
         if (result != null) {
@@ -615,7 +616,7 @@ class LoopController(context: Context) {
 
     @Synchronized private fun save() {
         if (!dirty) return
-        val stream = sessionFile.startWrite()
+        val stream = runCatching { sessionFile.startWrite() }.getOrElse { return }
         try {
             stream.write(serialize(false, false).toString().toByteArray(Charsets.UTF_8))
             sessionFile.finishWrite(stream)
@@ -873,7 +874,7 @@ class LoopController(context: Context) {
             recordingTargets = armedTargets
             armedTargets = emptySet()
             recordStart = armedAt
-            audioTargets = tracks.filter { it.isAudio && it.id in recordingTargets }.map { it.id }.toSet()
+            audioTargets = if (audioCapture != null) tracks.filter { it.isAudio && it.id in recordingTargets }.map { it.id }.toSet() else emptySet()
             if (audioTargets.isNotEmpty()) {
                 val elapsed = ((absoluteTick - recordStart) * 60_000_000_000.0 / (bpm * LoopMath.PPQ)).toLong()
                 audioCapture?.begin(clockNs - elapsed, loopSamples())
@@ -1019,7 +1020,7 @@ class LoopController(context: Context) {
             changed()
             return
         }
-        if (audioPermissionNeeded()) { audioError = "請授予麥克風錄音權限"; return }
+        if (audioPermissionNeeded()) { audioError = "請授予麥克風錄音權限"; publish(); return }
         audioError = null
         if (tracks.any { it.isAudio && it.id in inputTargetIds }) {
             cancelAudio()

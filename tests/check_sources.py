@@ -87,7 +87,7 @@ looper=(root/'app/src/main/java/tw/idv/christorng/liveperformer/LoopController.k
 assert 'val drums = Track(1' in looper and 'val bass = Track(2' in looper
 assert 'val strings = Track(3' in looper and 'val lead = Track(4' in looper
 assert 'val piano = Track(5' in looper
-assert 'nextId = 6' in looper
+assert 'nextId = 7' in looper and 'Track(6, -1' in looper
 print('PASS: compact performance UI, two-bar arrangement, categorised GM and launcher icon')
 
 assert 'enum class KeyboardMode' in panel and 'KeyboardMode.MONITOR' in panel
@@ -285,3 +285,8 @@ assert '"metronome-toggle"' in looper and 'NativeEngine.METRONOME_CLICK' in loop
 assert 'finishRecordingPass(' in looper and 'lastMidiMessage' in activity
 print('PASS: continuous replace recording, keyboard MIDI monitor and K7 click toggle')
 print('PASS: immersive mode, horizontal settings gain, compact stage faders and single/multi input selection')
+
+assert 'addAudioTrack' in looper and 'setAudioClip' in native_kt
+assert 'AudioLoopCapture' in looper and 'mixAudio(output, frames, sampleRate)' in cpp
+assert 'track.waveform' in panel and 'recordPermission' in activity
+print('PASS: audio tracks, microphone permission, waveform and native mixer wiring')

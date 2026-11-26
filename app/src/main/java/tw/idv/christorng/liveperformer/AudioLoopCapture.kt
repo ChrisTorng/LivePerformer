@@ -50,6 +50,7 @@ internal class AudioLoopCapture {
     private var epoch = 0L
     private var pcm = ShortArray(0)
     private var written = 0
+    private val bins = FloatArray(128)
     @SuppressLint("MissingPermission")
     fun open() {
         running = true
@@ -92,6 +93,7 @@ internal class AudioLoopCapture {
         epoch = start
         pcm = ShortArray(samples.coerceIn(1, LoopPcm.MAX_SAMPLES))
         written = 0
+        bins.fill(0f)
     }
     @Synchronized private fun append(buffer: ShortArray, count: Int, start: Long) {
         if (!running) return
@@ -105,10 +107,14 @@ internal class AudioLoopCapture {
         val size = minOf(count - source, pcm.size - dest)
         if (size > 0) {
             buffer.copyInto(pcm, dest, source, source + size)
+            for (i in dest until dest + size) {
+                val bin = (i.toLong() * bins.size / pcm.size).toInt().coerceAtMost(bins.lastIndex)
+                bins[bin] = maxOf(bins[bin], abs(pcm[i].toInt()) / 32768f)
+            }
             written = maxOf(written, dest + size)
         }
     }
-    @Synchronized fun preview(): List<Float> = LoopPcm.peaks(pcm)
+    @Synchronized fun preview(): List<Float> = bins.toList()
     @Synchronized fun finish(): ShortArray? {
         running = false
         val result = if (written > 0 && error == null) pcm.copyOf(written) else null
