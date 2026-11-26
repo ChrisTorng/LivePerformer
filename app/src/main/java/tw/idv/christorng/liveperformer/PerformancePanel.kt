@@ -580,9 +580,10 @@ private fun PianoRoll(
         }
         if (track.isAudio) {
             val color = Color(0xFF22D3EE).copy(alpha = if (audible) .9f else .25f)
-            val width = w * track.audioFraction.coerceAtMost(1f)
+            val width = w * track.audioFraction
             track.waveform.forEachIndexed { i, peak ->
                 val x = width * i / track.waveform.size
+                if (x >= w) return@forEachIndexed
                 val amplitude = peak * h * .47f
                 drawLine(color, Offset(x, h / 2 - amplitude), Offset(x, h / 2 + amplitude),
                     strokeWidth = (width / track.waveform.size).coerceAtLeast(1f))

@@ -54,7 +54,8 @@ data class LoopView(
     val countInEnabled: Boolean,
     val countInBars: Int,
     val countInBeatsLeft: Int,
-    val tapCount: Int
+    val tapCount: Int,
+    val audioError: String? = null
 )
 
 /**
@@ -686,7 +687,7 @@ class LoopController(context: Context) {
                     it.isAudio, if (it.id in audioTargets) audioCapture?.preview() ?: it.waveform else it.waveform,
                     if (it.id in audioTargets) 1f else (it.pcm.size.toFloat() / loopSamples().coerceAtLeast(1)))
             }, midiRoutes.toList(), countInEnabled, countInBars, countLeft,
-            tapTracker.tapCount)
+            tapTracker.tapCount, audioError)
     }
 
     private fun publish() {
@@ -1053,7 +1054,7 @@ class LoopController(context: Context) {
     /** Pad routes stay armed while keybed input is restricted to melody tracks. */
     private fun keyboardDestinations(sourceIsMpk: Boolean): Set<Int> =
         InputRoutingPolicy.keyboardDestinations(
-            inputTargetIds, midiRoutes, sourceIsMpk,
+            inputTargetIds.filterTo(linkedSetOf()) { id -> tracks.any { it.id == id && !it.isAudio } }, midiRoutes, sourceIsMpk,
             tracks.firstOrNull(::isDrumTrack)?.id,
             tracks.firstOrNull {
                 it.name.contains("Bass", ignoreCase = true) ||

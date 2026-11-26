@@ -1426,7 +1426,7 @@ private fun PerformerScreen() {
                 },
                 onDelete = { id -> pendingTrackRemoval = id },
                 onClear = { id -> pendingTrackClear = id },
-                midiMessage = looper.audioError ?: lastMidiMessage,
+                midiMessage = loopState.audioError ?: lastMidiMessage,
                 onRename = { id ->
                     renameTrackId = id
                     renameValue = loopState.tracks.firstOrNull { it.id == id }?.name.orEmpty()
