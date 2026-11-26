@@ -61,10 +61,11 @@ internal class AudioLoopCapture(private val device: AudioDeviceInfo? = null) {
     private var pcm = ShortArray(0)
     private var written = 0
     private val bins = FloatArray(128)
+    private var worker: Thread? = null
     @SuppressLint("MissingPermission")
     fun open() {
         running = true
-        Thread({
+        worker = Thread({
             var recorder: AudioRecord? = null
             try {
                 val min = AudioRecord.getMinBufferSize(LoopPcm.RATE,
@@ -104,7 +105,7 @@ internal class AudioLoopCapture(private val device: AudioDeviceInfo? = null) {
                 recorder?.release()
                 running = false
             }
-        }, "audio-loop-input").start()
+        }, "audio-loop-input").also { it.start() }
     }
     @Synchronized fun begin(start: Long, samples: Int) {
         epoch = start
@@ -153,5 +154,11 @@ internal class AudioLoopCapture(private val device: AudioDeviceInfo? = null) {
         return result
     }
     @Synchronized fun discardTake() { pcm = ShortArray(0); epoch = 0; written = 0 }
-    @Synchronized fun cancel() { monitor = false; running = false; discardTake() }
+    fun cancel() {
+        monitor = false
+        running = false
+        discardTake()
+        // Never wait while holding this capture's lock: reader may be appending.
+        runCatching { worker?.join(100) }
+    }
 }

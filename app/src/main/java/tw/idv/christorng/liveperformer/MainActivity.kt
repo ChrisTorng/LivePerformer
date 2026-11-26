@@ -226,7 +226,9 @@ private fun PerformerScreen() {
     var routeKey by remember { mutableStateOf("") }
     fun calibrationKey(): String {
         fun key(device: AudioDeviceInfo?) = device?.let { "${it.type}:${it.productName}:${it.address}" } ?: "automatic"
-        return key(inputs.firstOrNull { it.id == inputId }) + " → " + key(outputs.firstOrNull { it.id == requestedOutputId })
+        val inputKey = if (inputId == 0) "automatic:" + inputs.map { key(it) }.sorted().joinToString("|") else key(inputs.firstOrNull { it.id == inputId })
+        val outputKey = if (requestedOutputId == 0) "automatic:" + outputs.map { key(it) }.sorted().joinToString("|") else key(outputs.firstOrNull { it.id == requestedOutputId })
+        return "$inputKey → $outputKey"
     }
     fun applyInputSettings() {
         val key = calibrationKey()
@@ -319,6 +321,10 @@ private fun PerformerScreen() {
 
     fun runMeasurement() {
         if (measuring) return
+        if (inputId == 0 || requestedOutputId == 0) {
+            measurement = "請先明確選擇輸入和輸出裝置，再執行校正，避免將錯誤的裝置延遲套用到其他路徑。"
+            return
+        }
         if (!looper.pauseInputForCalibration()) { measurement = "請先停止播放及錄音。"; return }
         val device = inputs.firstOrNull { it.id == inputId }
         val key = calibrationKey()
@@ -1391,7 +1397,7 @@ private fun PerformerScreen() {
                 TextButton(onClick = { manualOffset = 0f; settings.edit().putFloat("audioManual:${calibrationKey()}", 0f).apply(); applyInputSettings() }) { Text("微調歸零") }
                 TextButton(onClick = { calibratedOffset = 0f; settings.edit().remove("audioCal:${calibrationKey()}").apply(); applyInputSettings() }) { Text("清除校正") }
             }
-            Text("以回錄測試校正輸出 callback 至輸入擷取的偏移。正值讓錄音提前；自動時間戳與校正值不重複扣除。", style = MaterialTheme.typography.bodySmall)
+            Text("請先指定輸入及輸出裝置，再以回錄測試校正。正值讓錄音提前；自動時間戳與校正值不重複扣除。", style = MaterialTheme.typography.bodySmall)
             HorizontalDivider()
             Text("音訊診斷", style = MaterialTheme.typography.titleMedium)
             Text(audioStatus, style = MaterialTheme.typography.bodySmall)

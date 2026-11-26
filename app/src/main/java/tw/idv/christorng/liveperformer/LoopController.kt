@@ -108,6 +108,7 @@ class LoopController(context: Context) {
     private var audioTargets: Set<Int> = emptySet()
     private var inputDevice: android.media.AudioDeviceInfo? = null
     private var inputEnabled = false
+    private var calibratingInput = false
     private var monitorEnabled = false
     private var monitorGain = .5f
     private var compensationMs = 0f
@@ -132,7 +133,7 @@ class LoopController(context: Context) {
         publish()
     }
     private fun ensureAudioInput() {
-        if (audioCapture != null) return
+        if (audioCapture != null || calibratingInput) return
         if (appContext.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED) {
             audioError = "請授予麥克風錄音權限"
@@ -144,11 +145,13 @@ class LoopController(context: Context) {
     }
     @Synchronized fun pauseInputForCalibration(): Boolean {
         if (playing || armedTrack != null || recordingTrack != null || audioTargets.isNotEmpty()) return false
+        calibratingInput = true
         cancelAudio()
         publish()
         return true
     }
     @Synchronized fun resumeInputAfterCalibration() {
+        calibratingInput = false
         if (inputEnabled || monitorEnabled) ensureAudioInput()
         publish()
     }
@@ -976,6 +979,7 @@ class LoopController(context: Context) {
         updateRecording()
         audioCapture?.error?.let { audioError = it; cancelAudio() }
         if (audioFinalizeNs != 0L && now >= audioFinalizeNs) finishAudio()
+        if (!calibratingInput && audioCapture == null && audioError == null && (inputEnabled || monitorEnabled)) ensureAudioInput()
         syncAudio()
         if (countInActive) {
             // Count-in clicks continue even when the ordinary metronome is switched off.
@@ -1075,6 +1079,7 @@ class LoopController(context: Context) {
 
     /** Arm is non-destructive and does not start transport by itself. */
     @Synchronized fun recordPause() {
+        if (calibratingInput) return
         if (armedTrack == null && recordingTrack == null &&
             tracks.none { it.id in inputTargetIds }) return
         advance(System.nanoTime())
@@ -1106,7 +1111,7 @@ class LoopController(context: Context) {
 
     @Synchronized fun clearTrack(id: Int) {
         val t = tracks.firstOrNull { it.id == id } ?: return
-        if (t.id in recordingTargets || t.id in armedTargets) stopRecord(absoluteTick)
+        if (t.id in recordingTargets || t.id in armedTargets || t.id in audioTargets) stopRecord(absoluteTick)
         t.events.clear()
         if (t.isAudio) t.replacePcm(ShortArray(0))
         releaseLiveTrack(t.id)
@@ -1819,7 +1824,7 @@ class LoopController(context: Context) {
 
     @Synchronized fun removeTrack(id: Int) {
         val track = tracks.firstOrNull { it.id == id } ?: return
-        if (id in recordingTargets || id in armedTargets) stopRecord(absoluteTick)
+        if (id in recordingTargets || id in armedTargets || id in audioTargets) stopRecord(absoluteTick)
         releaseLiveTrack(track.id)
         tracks.remove(track)
         midiRoutes.removeAll { it.trackId == id }
